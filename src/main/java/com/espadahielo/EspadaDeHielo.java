@@ -61,6 +61,15 @@ public final class EspadaDeHielo {
     // Separacion entre las particulas que dibujan la linea del rayo (en bloques). Cuanto mas
     // juntas, mas continua se ve la linea (que no parezca una fila de puntos sueltos)
     public static final double PASO_PARTICULAS_RAYO = 0.15;
+    // Punto del que sale la LINEA del rayo respecto a los ojos del jugador, en bloques: a su
+    // derecha, a la altura de la punta de la espada (que va mas arriba que la mano; valor
+    // negativo = por encima de los ojos) y bastante por delante, que es donde queda la espada
+    // sostenida en primera persona. Solo cambia el dibujo: el apuntado sigue saliendo de los
+    // ojos, asi que el rayo da en el mismo sitio de siempre, pero las particulas ya no tapan
+    // la vista
+    public static final double SALIDA_RAYO_DERECHA = 0.72;
+    public static final double SALIDA_RAYO_ABAJO = -0.05;
+    public static final double SALIDA_RAYO_ADELANTE = 0.80;
     // Color del rayo, en formato 0xRRGGBB: turquesa muy claro (casi blanco azulado)
     public static final int COLOR_RAYO_HIELO = 0xC8FFF8;
     // Color de la aurora de hielo que envuelve al enemigo congelado (azul claro)

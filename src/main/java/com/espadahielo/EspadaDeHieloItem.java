@@ -153,6 +153,11 @@ public class EspadaDeHieloItem extends Item {
      * y congela al primer enemigo que encuentra antes que un bloque solido (o nada, si solo
      * hay aire, en cuyo caso el rayo llega hasta el alcance maximo).
      *
+     * El apuntado (el clip y el objetivo) sale siempre de los ojos, para que se apunte al
+     * mismo sitio que mira el jugador. La LINEA visual, en cambio, se dibuja desde la espada
+     * (ver {@link #puntoDeSalidaDelRayo}), para que las particulas no tapen la vista en
+     * primera persona.
+     *
      * @param aplicarEfectos true para congelar al enemigo alcanzado en este disparo (hielo +
      *                       Ralentizacion), sonar y gastar durabilidad
      * @param aplicarDanio   true para ademas hacerle dano (se usa para que, manteniendo el
@@ -197,8 +202,10 @@ public class EspadaDeHieloItem extends Item {
             }
         }
 
-        // La linea visual (en cada tick de dibujo) y la aurora de hielo en los disparos
-        dibujarRayo(level, origen, fin);
+        // La linea visual (en cada tick de dibujo) y la aurora de hielo en los disparos.
+        // La linea sale de la espada, no de los ojos, pero termina en el mismo punto
+        // apuntado (fin), que se ha calculado desde los ojos
+        dibujarRayo(level, puntoDeSalidaDelRayo(player, origen, fin), fin);
         if (aplicarEfectos && objetivo != null && level instanceof ServerLevel server) {
             dibujarAuraCongelada(server, objetivo);
         }
@@ -206,6 +213,40 @@ public class EspadaDeHieloItem extends Item {
             level.playSound(null, player.getX(), player.getY(), player.getZ(),
                 SoundEvents.POWDER_SNOW_BREAK, SoundSource.PLAYERS, 0.7F, 1.4F);
         }
+    }
+
+    /**
+     * Punto desde el que se dibuja la linea del rayo: junto a la espada que el jugador lleva
+     * en la mano, en vez de en los ojos.
+     *
+     * Es un desplazamiento en el espacio del jugador:
+     * {@value EspadaDeHielo#SALIDA_RAYO_DERECHA} bloques a su derecha,
+     * {@value EspadaDeHielo#SALIDA_RAYO_ABAJO} hacia abajo y
+     * {@value EspadaDeHielo#SALIDA_RAYO_ADELANTE} hacia delante. Asi, en primera persona, las
+     * particulas salen de abajo a la derecha (donde se ve la espada) en vez de la cara, y la
+     * vista queda despejada. El punto final no cambia, asi que el rayo se sigue clavando en el
+     * mismo sitio al que se apunta.
+     *
+     * Para objetivos muy pegados (a menos de un bloque) se devuelve el propio ojo, porque el
+     * punto de la espada quedaria detras del objetivo y la linea saldria al reves.
+     *
+     * @param ojo posicion de los ojos del jugador (la que usa el apuntado)
+     * @param fin punto final del rayo, ya calculado desde los ojos
+     */
+    private static Vec3 puntoDeSalidaDelRayo(final Player player, final Vec3 ojo, final Vec3 fin) {
+        if (ojo.distanceTo(fin) < 1.0) {
+            return ojo;
+        }
+
+        // "Derecha" del jugador a partir de su giro horizontal (yaw). Se calcula con el yaw y
+        // no con el vector de mirada para que no valga cero al mirar recto hacia arriba o abajo
+        final float yaw = player.getYRot() * ((float) Math.PI / 180.0F);
+        final Vec3 derecha = new Vec3(-Math.cos(yaw), 0.0, -Math.sin(yaw));
+
+        return ojo
+            .add(derecha.scale(EspadaDeHielo.SALIDA_RAYO_DERECHA))
+            .add(0.0, -EspadaDeHielo.SALIDA_RAYO_ABAJO, 0.0)
+            .add(player.getLookAngle().scale(EspadaDeHielo.SALIDA_RAYO_ADELANTE));
     }
 
     /**
