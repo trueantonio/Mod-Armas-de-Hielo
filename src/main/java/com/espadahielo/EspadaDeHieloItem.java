@@ -1,10 +1,12 @@
 package com.espadahielo;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.particles.DustParticleOptions;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.effect.MobEffectInstance;
@@ -14,6 +16,7 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.ItemUseAnimation;
 import net.minecraft.world.item.ToolMaterial;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
@@ -53,6 +56,16 @@ public class EspadaDeHieloItem extends Item {
     // Maximo de saltos del rayo para descartar los bloques que ocupa el propio jugador
     private static final int MAX_SALTOS_RAYO = 8;
 
+    // Particula de la linea del rayo: puntos de turquesa claro. Con este tipo de particula
+    // elegimos el color exacto y, con el tamano, su duracion (asi la linea se desvanece al
+    // cabo de mas o menos un segundo, en vez de quedarse como las de "End Rod", > 3 segundos)
+    private static final DustParticleOptions PARTICULA_RAYO = new DustParticleOptions(
+        EspadaDeHielo.COLOR_RAYO_HIELO, EspadaDeHielo.TAMANO_PARTICULA_RAYO);
+
+    // Particula de la aurora que envuelve al enemigo congelado (azul claro)
+    private static final DustParticleOptions PARTICULA_AURA = new DustParticleOptions(
+        EspadaDeHielo.COLOR_AURA_HIELO, 0.9F);
+
     // Margen horizontal de la columna prohibida sobre el jugador: el hielo jamas debe
     // aparecer dentro de su cuerpo ni en su columna superior, ni siquiera mirando arriba
     private static final double MARGEN_COLUMNA = 0.5;
@@ -64,36 +77,88 @@ public class EspadaDeHieloItem extends Item {
     }
 
     /**
-     * Clic derecho: lanza el rayo de hielo hacia donde mira el jugador.
+     * Clic derecho: lanza el rayo de hielo hacia donde mira el jugador. Si se mantiene pulsado
+     * el boton, {@link #onUseTick} sigue disparando (uno cada
+     * {@value EspadaDeHielo#TICKS_ENTRE_DISPAROS_RAYO} ticks).
      *
-     * Minecraft llama a este metodo tanto en el cliente como en el servidor. En el cliente
-     * solo se deja el gesto (devolver SUCCESS hace que el brazo se mueva); quien modifica el
-     * mundo y envia las particulas es el servidor. Si la espada esta en espera no se dispara
-     * nada, y cada disparo consume 1 de durabilidad.
+     * Minecraft llama a este metodo tanto en el cliente como en el servidor. Aqui solo se
+     * empieza a "usar" el objeto ({@code startUsingItem}); quien modifica el mundo y envia las
+     * particulas es el servidor. El primer disparo sale ya en este metodo, para que un clic
+     * rapido (pulsar y soltar enseguida) tambien dispare. Cada disparo consume 1 de durabilidad.
      */
     @Override
     public InteractionResult use(final Level level, final Player player, final InteractionHand hand) {
-        final ItemStack stack = player.getItemInHand(hand);
-
-        if (player.getCooldowns().isOnCooldown(stack)) {
-            return InteractionResult.FAIL;
-        }
+        // Arranca el "uso" del objeto para que, mientras no se suelte el boton, se siga
+        // llamando a onUseTick. Sin animacion (ver getUseAnimation)
+        player.startUsingItem(hand);
 
         if (!level.isClientSide()) {
-            lanzarRayoDeHielo(level, player);
-            stack.hurtAndBreak(1, player, hand); // 1 de durabilidad por disparo
-            player.getCooldowns().addCooldown(stack, EspadaDeHielo.TICKS_COOLDOWN_RAYO);
+            lanzarRayoDeHielo(level, player, true, true);
+            player.getItemInHand(hand).hurtAndBreak(1, player, hand); // 1 de durabilidad
         }
 
-        return InteractionResult.SUCCESS;
+        return InteractionResult.CONSUME;
+    }
+
+    // El rayo no tiene tope de tiempo: se puede mantener pulsado tanto como se quiera
+    @Override
+    public int getUseDuration(final ItemStack stack, final LivingEntity living) {
+        return APPROXIMATELY_INFINITE_USE_DURATION;
+    }
+
+    // Sin animacion de uso: no queremos que la espada se ponga en pose de arco o de comer
+    @Override
+    public ItemUseAnimation getUseAnimation(final ItemStack stack) {
+        return ItemUseAnimation.NONE;
+    }
+
+    /**
+     * Se ejecuta cada tick mientras el jugador mantiene pulsado el clic derecho.
+     *
+     * La LINEA del rayo se vuelve a dibujar cada {@value EspadaDeHielo#TICKS_DIBUJO_RAYO}
+     * ticks, para que se vea siempre (continua) mientras se mantiene pulsado. En cambio, el
+     * congelado, el sonido y el gasto de durabilidad se aplican cada
+     * {@value EspadaDeHielo#TICKS_ENTRE_DISPAROS_RAYO} ticks, y el dano cada
+     * {@value EspadaDeHielo#TICKS_DANIO_RAYO} ticks (un segundo).
+     *
+     * Solo trabaja el servidor: el cliente se limita a mantener el gesto y a mover la vista, y
+     * como el rayo se recalcula con la mirada actual, se puede ir girando mientras dispara.
+     */
+    @Override
+    public void onUseTick(final Level level, final LivingEntity living, final ItemStack stack,
+                          final int remainingUseTicks) {
+        if (level.isClientSide() || !(living instanceof Player player)) {
+            return;
+        }
+
+        final int transcurridos = getUseDuration(stack, living) - remainingUseTicks;
+        if (transcurridos <= 0 || transcurridos % EspadaDeHielo.TICKS_DIBUJO_RAYO != 0) {
+            return;
+        }
+
+        // El disparo de "el primer tick" ya lo hace use(), asi que aqui solo contamos a partir de el
+        final boolean disparo = transcurridos % EspadaDeHielo.TICKS_ENTRE_DISPAROS_RAYO == 0;
+        final boolean conDanio = transcurridos % EspadaDeHielo.TICKS_DANIO_RAYO == 0;
+
+        lanzarRayoDeHielo(level, player, disparo, disparo && conDanio);
+        if (disparo) {
+            stack.hurtAndBreak(1, player, living.getUsedItemHand()); // 1 de durabilidad por disparo
+        }
     }
 
     /**
      * Traza el rayo desde los ojos del jugador en la direccion de su mirada, dibuja la linea
      * y congela al primer enemigo que encuentra antes que un bloque solido (o nada, si solo
      * hay aire, en cuyo caso el rayo llega hasta el alcance maximo).
+     *
+     * @param aplicarEfectos true para congelar al enemigo alcanzado en este disparo (hielo +
+     *                       Ralentizacion), sonar y gastar durabilidad
+     * @param aplicarDanio   true para ademas hacerle dano (se usa para que, manteniendo el
+     *                       rayo sobre el mismo objetivo, le caiga dano cada
+     *                       {@value EspadaDeHielo#TICKS_DANIO_RAYO} ticks, o sea cada segundo)
      */
-    private static void lanzarRayoDeHielo(final Level level, final Player player) {
+    private static void lanzarRayoDeHielo(final Level level, final Player player,
+                                          final boolean aplicarEfectos, final boolean aplicarDanio) {
         final Vec3 origen = player.getEyePosition();
         final Vec3 direccion = player.getLookAngle();
         final Vec3 alcance = origen.add(direccion.scale(EspadaDeHielo.ALCANCE_RAYO_HIELO));
@@ -112,9 +177,9 @@ public class EspadaDeHieloItem extends Item {
             objetivo = vivo;
         }
 
-        // Congelado: hielo (ticks congelado, que dejan al enemigo helado y recibiendo dano de
-        // congelacion) mas Ralentizacion, para que ademas se mueva mucho mas despacio
-        if (objetivo != null && objetivo.canFreeze()) {
+        // Congelado: hielo (ticks congelado, que dejan al enemigo helado) mas Ralentizacion,
+        // para que ademas se mueva mucho mas despacio. Solo en los fps de "disparo"
+        if (aplicarEfectos && objetivo != null && objetivo.canFreeze()) {
             objetivo.setTicksFrozen(Math.max(objetivo.getTicksFrozen(), EspadaDeHielo.TICKS_CONGELADO_RAYO));
             objetivo.addEffect(new MobEffectInstance(
                 MobEffects.SLOWNESS,
@@ -123,12 +188,22 @@ public class EspadaDeHieloItem extends Item {
             ));
             level.playSound(null, objetivo.getX(), objetivo.getEyeY(), objetivo.getZ(),
                 SoundEvents.PLAYER_HURT_FREEZE, SoundSource.PLAYERS, 0.9F, 0.8F);
+
+            // Dano del rayo: solo en los disparos marcados (uno por segundo), no en todos
+            if (aplicarDanio && level instanceof ServerLevel server) {
+                objetivo.hurtServer(server, level.damageSources().freeze(), EspadaDeHielo.DANIO_RAYO_HIELO);
+            }
         }
 
-        // La linea visual y el sonido del disparo
+        // La linea visual (en cada tick de dibujo) y la aurora de hielo en los disparos
         dibujarRayo(level, origen, fin);
-        level.playSound(null, player.getX(), player.getY(), player.getZ(),
-            SoundEvents.POWDER_SNOW_BREAK, SoundSource.PLAYERS, 0.7F, 1.4F);
+        if (aplicarEfectos && objetivo != null && level instanceof ServerLevel server) {
+            dibujarAuraCongelada(server, objetivo);
+        }
+        if (aplicarEfectos) {
+            level.playSound(null, player.getX(), player.getY(), player.getZ(),
+                SoundEvents.POWDER_SNOW_BREAK, SoundSource.PLAYERS, 0.7F, 1.4F);
+        }
     }
 
     /**
@@ -186,12 +261,35 @@ public class EspadaDeHieloItem extends Item {
 
         for (int i = 0; i <= puntos; i++) {
             final Vec3 punto = origen.add(paso.scale(i));
-            // Nucleo brillante del rayo: chispas estaticas, sin gravedad
-            server.sendParticles(ParticleTypes.END_ROD, punto.x, punto.y, punto.z, 1, 0.0, 0.0, 0.0, 0.0);
-            // Copos de nieve intercalados para dar el toque de hielo
-            if (i % 3 == 0) {
-                server.sendParticles(ParticleTypes.SNOWFLAKE, punto.x, punto.y, punto.z, 1, 0.0, 0.0, 0.0, 0.0);
-            }
+            // Puntos turquesa claro: el color y el tamano estan fijados en PARTICULA_RAYO
+            server.sendParticles(PARTICULA_RAYO, punto.x, punto.y, punto.z, 1, 0.0, 0.0, 0.0, 0.0);
+        }
+    }
+
+    /**
+     * Dibuja una pequena aurora de hielo alrededor del enemigo alcanzado: copos de nieve y
+     * chispas azul claro repartidos por su caja, para que se note que esta helado.
+     *
+     * Minecraft solo pinta el tinte azul de congelado en la pantalla del jugador (HUD), no en
+     * el cuerpo de las criaturas: a una criatura congelada solo se le nota el temblor. Esta
+     * aurora es la que le da el aspecto helado visible desde fuera.
+     */
+    private static void dibujarAuraCongelada(final ServerLevel server, final LivingEntity objetivo) {
+        final AABB caja = objetivo.getBoundingBox().inflate(0.15);
+        final RandomSource azar = objetivo.getRandom();
+
+        for (int i = 0; i < 10; i++) {
+            final double x = caja.minX + azar.nextDouble() * (caja.maxX - caja.minX);
+            final double y = caja.minY + azar.nextDouble() * (caja.maxY - caja.minY);
+            final double z = caja.minZ + azar.nextDouble() * (caja.maxZ - caja.minZ);
+            server.sendParticles(ParticleTypes.SNOWFLAKE, x, y, z, 1, 0.0, 0.0, 0.0, 0.0);
+        }
+
+        for (int i = 0; i < 6; i++) {
+            final double x = caja.minX + azar.nextDouble() * (caja.maxX - caja.minX);
+            final double y = caja.minY + azar.nextDouble() * (caja.maxY - caja.minY);
+            final double z = caja.minZ + azar.nextDouble() * (caja.maxZ - caja.minZ);
+            server.sendParticles(PARTICULA_AURA, x, y, z, 1, 0.0, 0.0, 0.0, 0.0);
         }
     }
 

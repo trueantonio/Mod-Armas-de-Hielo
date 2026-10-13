@@ -39,17 +39,35 @@ public final class EspadaDeHielo {
 
     // --- Rayo de hielo (clic derecho) ---
     // Alcance del rayo, en bloques
-    public static final double ALCANCE_RAYO_HIELO = 10.0;
+    public static final double ALCANCE_RAYO_HIELO = 15.0;
     // Ticks de congelado que se aplican al enemigo alcanzado. El hielo se va derritiendo
     // 1 tick por tick, asi que el valor es, a la vez, cuantos ticks dura el congelado.
     // Vanilla considera "congelado del todo" a partir de 140 ticks
     // (Entity.BASE_TICKS_REQUIRED_TO_FREEZE), y por encima de eso empieza a hacer dano de
     // congelacion, asi que con 160 el enemigo queda helado del todo y empieza a sufrirlo.
     public static final int TICKS_CONGELADO_RAYO = 160;
-    // Tiempo de espera entre disparos del rayo (en ticks; 10 = medio segundo)
-    public static final int TICKS_COOLDOWN_RAYO = 10;
-    // Separacion entre las particulas que dibujan la linea del rayo (en bloques)
-    public static final double PASO_PARTICULAS_RAYO = 0.35;
+    // Tiempo entre disparos mientras se mantiene pulsado el clic derecho (en ticks;
+    // 10 = medio segundo). El primer disparo sale al pulsar y luego uno cada intervalo.
+    // Cada disparo aplica el congelado, el sonido y gasta durabilidad
+    public static final int TICKS_ENTRE_DISPAROS_RAYO = 10;
+    // Cada cuantos ticks se vuelve a dibujar la linea del rayo mientras se mantiene pulsado.
+    // Muy bajo (2 = cada decima de segundo) para que la linea este siempre ahi y no se vea
+    // como una linea nueva que sale detras de otra
+    public static final int TICKS_DIBUJO_RAYO = 2;
+    // Cada cuantos ticks el rayo hace dano al enemigo que tiene enganchado (20 = 1 segundo)
+    public static final int TICKS_DANIO_RAYO = 20;
+    // Dano que aplica el rayo cada TICKS_DANIO_RAYO mientras se mantiene sobre el objetivo
+    public static final float DANIO_RAYO_HIELO = 2.0F;
+    // Separacion entre las particulas que dibujan la linea del rayo (en bloques). Cuanto mas
+    // juntas, mas continua se ve la linea (que no parezca una fila de puntos sueltos)
+    public static final double PASO_PARTICULAS_RAYO = 0.15;
+    // Color del rayo, en formato 0xRRGGBB: turquesa muy claro (casi blanco azulado)
+    public static final int COLOR_RAYO_HIELO = 0xC8FFF8;
+    // Color de la aurora de hielo que envuelve al enemigo congelado (azul claro)
+    public static final int COLOR_AURA_HIELO = 0xBFE8FF;
+    // Tamano de cada particula del rayo. Ademas de agrandarlas o empequenecerlas, fija su
+    // duracion: cuanto mas pequena, antes se desvanece (la linea desaparece mas rapido)
+    public static final float TAMANO_PARTICULA_RAYO = 1.0F;
 
     // Registro diferido de los items del mod, bajo el namespace "espadahielo"
     public static final DeferredRegister<Item> ITEMS = DeferredRegister.create(ForgeRegistries.ITEMS, MODID);
