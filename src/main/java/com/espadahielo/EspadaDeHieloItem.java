@@ -39,6 +39,8 @@ import java.util.Optional;
  * Efectos especiales:
  *  - Al golpear el agua con clic izquierdo congela un area con forma aleatoria en el
  *    bloque de agua al que se apunta (siempre enfrente del jugador, nunca encima suyo).
+ *  - Al golpear lava con clic izquierdo evapora el bloque apuntado: lo quita del mundo con
+ *    el siseo y el humo tipicos de echar agua sobre lava.
  *  - Al golpear a una entidad aplica el efecto de Ralentizacion (ver EspadaDeHielo).
  *  - Al usar con clic derecho lanza un rayo de hielo en la direccion de la mirada: dibuja
  *    la linea hasta donde se apunta (hasta {@value EspadaDeHielo#ALCANCE_RAYO_HIELO}
@@ -294,43 +296,68 @@ public class EspadaDeHieloItem extends Item {
     }
 
     /**
-     * Logica de congelado en area al golpear el agua.
+     * Accion de la espada al golpear un fluido con el clic izquierdo: al agua la congela en
+     * area y a la lava la evapora (quita el bloque).
      *
      * El raytrace normal de "golpear/interactuar" de Minecraft ignora los fluidos, asi que
-     * al apuntar al agua devolveria el bloque del fondo del charco. Por eso hacemos nuestro
-     * propio raytrace con deteccion de fluidos, igual que la cubeta y el nenufar del vanilla
-     * ({@code getPlayerPOVHitResult}): el primer agua que cruza el rayo es la mas cercana,
-     * asi que no hace falta ningun bloque solido a la vista (agua profunda desde la
-     * superficie congela la propia superficie).
+     * al apuntar al agua o a la lava devolveria el bloque que hay detras. Por eso hacemos
+     * nuestro propio raytrace con deteccion de fluidos, igual que la cubeta y el nenufar del
+     * vanilla ({@code getPlayerPOVHitResult}): el primer fluido que cruza el rayo es el mas
+     * cercano, asi que no hace falta ningun bloque solido a la vista (agua o lava profundas
+     * desde la superficie actuan sobre la propia superficie).
      *
-     * El rayo sale en la direccion exacta de la mirada (xRot/yRot): apuntar hacia abajo
-     * congela mas abajo, apuntar hacia arriba mas arriba, sin depender de la altura del
-     * jugador. El area se centra en la casilla de agua golpeada, descartando los bloques
-     * de la zona prohibida del jugador (su cuerpo y la columna que sube desde su cabeza):
-     * si se mira hacia arriba nadando, el hielo nunca sale pegado ni encima del
-     * personaje, sino mas adelante por donde va la mirada.
+     * El rayo sale en la direccion exacta de la mirada (xRot/yRot), sin depender de la altura
+     * del jugador.
+     *
+     * La LAVA se apunta tambien dentro de la zona del jugador, para poder quitarla aunque se
+     * este pisando o nadando en ella. El AGUA en cambio respeta la zona prohibida (el cuerpo
+     * del jugador y la columna que sube desde su cabeza): el hielo nunca debe aparecer dentro
+     * de el ni encima, sino mas adelante por donde mira.
      *
      * Se invoca desde dos vias: el clic izquierdo sobre un bloque (cliente y servidor) y el
      * paquete propio de golpe al aire (solo servidor, ver PaqueteGolpearAgua).
      *
      * @param xRot inclinacion vertical de la mirada (grados) con la que se golpeo
      * @param yRot rotacion horizontal de la mirada (grados) con la que se golpeo
-     * @return true si se ha apuntado al agua (y el clic debe cancelarse)
+     * @return true si se ha apuntado al agua o a la lava (y el clic debe cancelarse)
      */
-    public boolean intentarCongelar(final Level level, final Player player, final ItemStack stack,
-                                    final float xRot, final float yRot) {
-        final BlockHitResult hit = apuntarAguaFueraDelJugador(level, player, xRot, yRot);
+    public boolean intentarGolpeDeEspada(final Level level, final Player player, final ItemStack stack,
+                                         final float xRot, final float yRot) {
+        // Primer apuntado sin descartar la zona del jugador: sirve para la lava que se esta
+        // pisando o nadando (el bloque que ocupa el propio cuerpo)
+        final BlockHitResult directo = apuntarFluido(level, player, xRot, yRot, false);
+        if (directo != null && level.getBlockState(directo.getBlockPos()).is(Blocks.LAVA)) {
+            return evaporarLava(level, player, stack, directo.getBlockPos());
+        }
+
+        // El agua si respeta la zona prohibida del jugador
+        final BlockHitResult hit = apuntarFluido(level, player, xRot, yRot, true);
         if (hit == null) {
             return false;
         }
 
         final BlockPos centro = hit.getBlockPos();
-        if (!level.getBlockState(centro).is(Blocks.WATER)) {
-            return false;
+        if (level.getBlockState(centro).is(Blocks.WATER)) {
+            return congelarAgua(level, player, stack, centro);
+        }
+        if (level.getBlockState(centro).is(Blocks.LAVA)) {
+            return evaporarLava(level, player, stack, centro);
         }
 
+        return false;
+    }
+
+    /**
+     * Congela en area los bloques de agua alrededor de {@code centro}. Se elige una forma al
+     * azar para cada golpe y ninguna celda puede caer en la zona prohibida del jugador: su
+     * cuerpo (para no congelarlo dentro) ni la columna que sube desde su cabeza.
+     *
+     * @return true siempre, para que el clic se cancele
+     */
+    private boolean congelarAgua(final Level level, final Player player, final ItemStack stack,
+                                 final BlockPos centro) {
         if (level.isClientSide()) {
-            return true;
+            return true; // En el cliente solo se cancela el clic; el mundo lo cambia el servidor
         }
 
         // Se elige una forma al azar para cada golpe
@@ -367,23 +394,65 @@ public class EspadaDeHieloItem extends Item {
     }
 
     /**
-     * Raytrace con deteccion de fluidos que devuelve el bloque de agua al que se apunta,
-     * saltando la zona prohibida del jugador (su cuerpo y la columna que sube desde su
-     * cabeza con {@value #MARGEN_COLUMNA} de margen horizontal).
+     * Evapora el bloque de lava golpeado: lo quita del mundo (queda aire) con el mismo efecto
+     * que cuando se derrama agua sobre la lava en el vanilla, o sea el siseo de la lava que se
+     * apaga ({@code LAVA_EXTINGUISH}) y una bocanada de humo. Se quita de uno en uno: solo el
+     * bloque apuntado, no los de al lado.
      *
-     * Si no hay ningun bloque solido al alcance (agua profunda), el propio rayo contra el
-     * fluido devuelve la casilla de agua mas cercana, asi que siempre hay referencia. Al
-     * bucear el rayo chocaria enseguida con el agua de nuestra propia cara (el bloque que
-     * nos contiene), y apuntando hacia arriba chocaria con el agua justo sobre la cabeza;
-     * en ambos casos se avanza el rayo para buscar agua mas adelante por donde mira el
-     * personaje, nunca encima suyo.
-     *
-     * @param xRot inclinacion vertical de la mirada (grados)
-     * @param yRot rotacion horizontal de la mirada (grados)
-     * @return el golpe contra un bloque fuera de la zona prohibida, o null si no hay agua
+     * @return true siempre, para que el clic se cancele y no se ponga a minar
      */
-    private static BlockHitResult apuntarAguaFueraDelJugador(final Level level, final Player player,
-                                                             final float xRot, final float yRot) {
+    private boolean evaporarLava(final Level level, final Player player, final ItemStack stack,
+                                 final BlockPos centro) {
+        if (level.isClientSide()) {
+            return true; // En el cliente solo se cancela el clic; el mundo lo cambia el servidor
+        }
+
+        if (!level.setBlock(centro, Blocks.AIR.defaultBlockState(), 3)) {
+            return true;
+        }
+
+        // Cada golpe consume 1 de durabilidad
+        stack.hurtAndBreak(1, player, InteractionHand.MAIN_HAND);
+
+        // El siseo y el humo, con los mismos valores que usa el vanilla cuando el agua apaga
+        // la lava: 8 nubes de humo grande y el sonido a volumen 0.5 y tono variable
+        final double x = centro.getX() + 0.5;
+        final double y = centro.getY() + 0.5;
+        final double z = centro.getZ() + 0.5;
+        level.playSound(null, centro, SoundEvents.LAVA_EXTINGUISH, SoundSource.BLOCKS,
+            0.5F, 2.6F + (player.getRandom().nextFloat() - player.getRandom().nextFloat()) * 0.8F);
+
+        if (level instanceof ServerLevel server) {
+            server.sendParticles(ParticleTypes.LARGE_SMOKE, x, y, z, 8, 0.25, 0.25, 0.25, 0.02);
+            // Un pelin de vapor extra, para que se note que el bloque hierve y se desvanece
+            server.sendParticles(ParticleTypes.CLOUD, x, y, z, 5, 0.3, 0.3, 0.3, 0.03);
+        }
+
+        return true;
+    }
+
+    /**
+     * Raytrace con deteccion de fluidos que devuelve el bloque de agua o de lava al que se
+     * apunta.
+     *
+     * Si no hay ningun bloque solido al alcance (agua o lava profundas), el propio rayo contra
+     * el fluido devuelve la casilla de fluido mas cercana, asi que siempre hay referencia.
+     *
+     * @param xRot              inclinacion vertical de la mirada (grados)
+     * @param yRot              rotacion horizontal de la mirada (grados)
+     * @param saltarZonaJugador si es true, se descartan los bloques de la zona prohibida del
+     *                          jugador (su cuerpo y la columna que sube desde su cabeza con
+     *                          {@value #MARGEN_COLUMNA} de margen horizontal), avanzando el
+     *                          rayo para buscar el fluido mas adelante por donde mira: asi,
+     *                          aunque mire hacia arriba nadando, el agua nunca se toca pegada
+     *                          ni encima del personaje. Con false se devuelve el primer acierto
+     *                          tal cual, lo que permite apuntar a la lava que se esta pisando o
+     *                          nadando
+     * @return el golpe contra el fluido apuntado, o null si no hay ninguno
+     */
+    private static BlockHitResult apuntarFluido(final Level level, final Player player,
+                                                final float xRot, final float yRot,
+                                                final boolean saltarZonaJugador) {
         final Vec3 direccion = player.calculateViewVector(xRot, yRot);
         Vec3 desde = player.getEyePosition();
         final Vec3 hasta = desde.add(direccion.scale(player.blockInteractionRange()));
@@ -396,6 +465,10 @@ public class EspadaDeHieloItem extends Item {
 
             if (hit.getType() != HitResult.Type.BLOCK) {
                 return null;
+            }
+
+            if (!saltarZonaJugador) {
+                return hit;
             }
 
             final AABB cajaBloque = new AABB(hit.getBlockPos());

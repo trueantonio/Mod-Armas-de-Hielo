@@ -103,8 +103,9 @@ public final class EspadaDeHielo {
         }
     }
 
-    // Al golpear el agua con la Espada de Hielo en la mano principal (clic izquierdo que
-    // acierta a un bloque), congela en area los bloques de agua del punto apuntado.
+    // Al golpear con la Espada de Hielo en la mano principal (clic izquierdo que acierta a un
+    // bloque) se actua sobre el fluido apuntado: se congela en area si es agua y se evapora
+    // si es lava.
     // Listener Predicate: devolver true cancela el clic (evita minar el fondo del charco).
     // (Va aqui y no en EventosMod porque la clase anotada con @EventBusSubscriber
     // exige @SubscribeEvent en todos sus metodos estaticos con un evento como parametro)
@@ -120,13 +121,14 @@ public final class EspadaDeHielo {
             return false;
         }
 
-        return espada.intentarCongelar(event.getLevel(), event.getEntity(), stack,
+        return espada.intentarGolpeDeEspada(event.getLevel(), event.getEntity(), stack,
             event.getEntity().getXRot(), event.getEntity().getYRot());
     }
 
     // Al golpear el aire con la Espada de Hielo en la mano principal. Solo se ejecuta en
-    // el cliente: le manda al servidor los angulos de mira para que el congele el agua mas
-    // cercana en esa direccion (el cliente no modifica el mundo por si mismo)
+    // el cliente: le manda al servidor los angulos de mira para que el congele el agua (o
+    // evapore la lava) mas cercana en esa direccion (el cliente no modifica el mundo por
+    // si mismo)
     private static void alGolpearAlAire(final PlayerInteractEvent.LeftClickEmpty event) {
         if (!(event.getEntity().getMainHandItem().getItem() instanceof EspadaDeHieloItem)) {
             return;
@@ -138,8 +140,9 @@ public final class EspadaDeHielo {
         );
     }
 
-    // El servidor recibe el aviso de golpe al aire y congela (hilo principal via addMain).
-    // Valida que el emisor exista y que los angulos sean numeros sanos antes de usarlos
+    // El servidor recibe el aviso de golpe al aire y congela o evapora (hilo principal via
+    // addMain). Valida que el emisor exista y que los angulos sean numeros sanos antes de
+    // usarlos
     private static void alGolpearAguaVacia(final PaqueteGolpearAgua paquete, final CustomPayloadEvent.Context contexto) {
         final var jugador = contexto.getSender();
         if (jugador == null || !Float.isFinite(paquete.xRot()) || !Float.isFinite(paquete.yRot())) {
@@ -151,6 +154,6 @@ public final class EspadaDeHielo {
             return;
         }
 
-        espada.intentarCongelar(jugador.level(), jugador, stack, paquete.xRot(), paquete.yRot());
+        espada.intentarGolpeDeEspada(jugador.level(), jugador, stack, paquete.xRot(), paquete.yRot());
     }
 }
