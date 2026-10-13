@@ -1,0 +1,16 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "equipment",
+  "key": {
+    "H": "minecraft:ice",
+    "P": "minecraft:stick"
+  },
+  "pattern": [
+    "H",
+    "H",
+    "P"
+  ],
+  "result": {
+    "id": "espadahielo:espada_de_hielo"
+  }
+}
