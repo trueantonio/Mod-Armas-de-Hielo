@@ -37,6 +37,20 @@ public final class EspadaDeHielo {
     // Nivel del debuff: 0 = Ralentizacion I, 1 = II, 2 = III, 3 = IV (60% mas lento)...
     public static final int NIVEL_RALENTIZACION = 3;
 
+    // --- Rayo de hielo (clic derecho) ---
+    // Alcance del rayo, en bloques
+    public static final double ALCANCE_RAYO_HIELO = 10.0;
+    // Ticks de congelado que se aplican al enemigo alcanzado. El hielo se va derritiendo
+    // 1 tick por tick, asi que el valor es, a la vez, cuantos ticks dura el congelado.
+    // Vanilla considera "congelado del todo" a partir de 140 ticks
+    // (Entity.BASE_TICKS_REQUIRED_TO_FREEZE), y por encima de eso empieza a hacer dano de
+    // congelacion, asi que con 160 el enemigo queda helado del todo y empieza a sufrirlo.
+    public static final int TICKS_CONGELADO_RAYO = 160;
+    // Tiempo de espera entre disparos del rayo (en ticks; 10 = medio segundo)
+    public static final int TICKS_COOLDOWN_RAYO = 10;
+    // Separacion entre las particulas que dibujan la linea del rayo (en bloques)
+    public static final double PASO_PARTICULAS_RAYO = 0.35;
+
     // Registro diferido de los items del mod, bajo el namespace "espadahielo"
     public static final DeferredRegister<Item> ITEMS = DeferredRegister.create(ForgeRegistries.ITEMS, MODID);
 
