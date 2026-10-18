@@ -1,3 +1,6 @@
 {
-  "item.espadahielo.espada_de_hielo": "Espada de Hielo"
+  "item.espadahielo.espada_de_hielo": "Espada de Hielo",
+  "item.espadahielo.cetro_de_hielo": "Cetro de Hielo",
+  "item.espadahielo.bola_de_hielo": "Bola de Hielo",
+  "entity.espadahielo.bola_de_hielo": "Bola de Hielo"
 }

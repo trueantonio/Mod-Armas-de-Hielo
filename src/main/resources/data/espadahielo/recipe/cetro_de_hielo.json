@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "equipment",
+  "key": {
+    "B": "minecraft:blue_ice",
+    "L": "minecraft:ghast_tear",
+    "P": "minecraft:stick"
+  },
+  "pattern": [
+    "BLB",
+    " P ",
+    " P "
+  ],
+  "result": {
+    "id": "espadahielo:cetro_de_hielo"
+  }
+}

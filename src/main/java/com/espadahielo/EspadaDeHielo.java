@@ -1,6 +1,8 @@
 package com.espadahielo;
 
 import net.minecraft.core.registries.Registries;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.item.CreativeModeTabs;
 import net.minecraft.world.item.Item;
 import net.minecraftforge.event.BuildCreativeModeTabContentsEvent;
@@ -21,15 +23,16 @@ public final class EspadaDeHielo {
     // Id del mod, definido en un unico lugar para todo el codigo
     public static final String MODID = "espadahielo";
 
-    // Canal de red propio del mod. El cliente usa el paquete para avisar al servidor
-    // cuando se golpea el aire con la espada, ya que Minecraft no manda nada al servidor
-    // en ese caso (el evento LeftClickEmpty existe solo en el cliente)
+    // Canal de red propio del mod. El cliente usa los paquetes para avisar al servidor
+    // de los clics izquierdos al aire con cada arma, ya que Minecraft no manda nada al
+    // servidor en ese caso (el evento LeftClickEmpty existe solo en el cliente)
     public static final SimpleChannel CANAL = ChannelBuilder.named(MODID + ":main")
-        .networkProtocolVersion(1)
+        .networkProtocolVersion(2)
         .simpleChannel()
             .play()
                 .serverbound()
                     .addMain(PaqueteGolpearAgua.class, PaqueteGolpearAgua.STREAM_CODEC, EspadaDeHielo::alGolpearAguaVacia)
+                    .addMain(PaqueteDispararBola.class, PaqueteDispararBola.STREAM_CODEC, EspadaDeHielo::alDispararBolaAlAire)
         .build();
 
     // Duracion del debuff de ralentizacion al golpear (100 ticks = 5 segundos)
@@ -81,10 +84,50 @@ public final class EspadaDeHielo {
     // Registro diferido de los items del mod, bajo el namespace "espadahielo"
     public static final DeferredRegister<Item> ITEMS = DeferredRegister.create(ForgeRegistries.ITEMS, MODID);
 
+    // --- Cetro de Hielo ---
+    // Durabilidad total del cetro. Cada bola de hielo lanzada consume 1 (igual que una
+    // flecha) y la invocacion del elemental consume un 33% de esta cantidad
+    public static final int DURABILIDAD_CETRO = 500;
+
+    // --- Bola de hielo (clic izquierdo del Cetro de Hielo) ---
+    // Potencia de la explosion al impactar (la bola de fuego del ghast tiene 1)
+    public static final int POTENCIA_EXPLOSION_BOLA = 3;
+    // Dano directo del impacto contra la entidad acertada (igual que la bola del ghast)
+    public static final float DANIO_IMPACTO_BOLA = 6.0F;
+    // Ticks de congelado que aplica el impacto directo contra una entidad viva
+    public static final int TICKS_CONGELADO_BOLA = 100;
+
     // La Espada de Hielo: mismas estadisticas que una espada de hierro (250 durabilidad,
     // 6 de ataque, 1.6 de velocidad de ataque) con efectos extra de hielo
     public static final RegistryObject<Item> ESPADA_DE_HIELO = ITEMS.register("espada_de_hielo",
         () -> new EspadaDeHieloItem(new Item.Properties().setId(ITEMS.key("espada_de_hielo")))
+    );
+
+    // El Cetro de Hielo: arma a distancia con bola de hielo explosiva e invocacion
+    // del elemental de hielo
+    public static final RegistryObject<Item> CETRO_DE_HIELO = ITEMS.register("cetro_de_hielo",
+        () -> new CetroDeHieloItem(new Item.Properties().setId(ITEMS.key("cetro_de_hielo"))
+            .durability(DURABILIDAD_CETRO))
+    );
+
+    // Item interno que pinta la bola de hielo en vuelo. No aparece en el inventario:
+    // solo le da modelo y textura al proyectil (ver BolaDeHieloItem)
+    public static final RegistryObject<Item> BOLA_DE_HIELO = ITEMS.register("bola_de_hielo",
+        () -> new BolaDeHieloItem(new Item.Properties().setId(ITEMS.key("bola_de_hielo")))
+    );
+
+    // Registro diferido de las entidades del mod, bajo el namespace "espadahielo"
+    public static final DeferredRegister<EntityType<?>> ENTIDADES = DeferredRegister.create(Registries.ENTITY_TYPE, MODID);
+
+    // La bola de hielo: proyectil explosivo del cetro, con la misma logica de impacto
+    // que la bola de fuego del ghast pero mas potente y congelando a quien acierta
+    public static final RegistryObject<EntityType<BolaDeHielo>> ENTIDAD_BOLA_DE_HIELO = ENTIDADES.register("bola_de_hielo",
+        () -> EntityType.Builder.<BolaDeHielo>of(BolaDeHielo::new, MobCategory.MISC)
+            .noLootTable()
+            .sized(1.0F, 1.0F)
+            .clientTrackingRange(10)
+            .updateInterval(10)
+            .build(ENTIDADES.key("bola_de_hielo"))
     );
 
     public EspadaDeHielo(FMLJavaModLoadingContext context) {
@@ -92,6 +135,7 @@ public final class EspadaDeHielo {
 
         // Registrar el DeferredRegister en el bus de eventos del mod
         ITEMS.register(modBusGroup);
+        ENTIDADES.register(modBusGroup);
 
         // Anadir la espada a la pestana de Combate del inventario creativo
         BuildCreativeModeTabContentsEvent.BUS.addListener(EspadaDeHielo::addCreative);
@@ -104,11 +148,20 @@ public final class EspadaDeHielo {
         // Golpear el aire (sin bloque solido a la vista, p. ej. apuntando al agua profunda
         // desde la superficie). Este evento es solo cliente: le avisamos al servidor
         PlayerInteractEvent.LeftClickEmpty.BUS.addListener(EspadaDeHielo::alGolpearAlAire);
+
+        // Bola de hielo: clic izquierdo con el Cetro de Hielo apuntando a un bloque.
+        // Se cancela el clic (el cetro no sirve para minar) y el servidor lanza la bola
+        PlayerInteractEvent.LeftClickBlock.BUS.addListener(EspadaDeHielo::alGolpearConCetro);
+
+        // Bola de hielo: clic izquierdo al aire con el Cetro de Hielo. Solo cliente:
+        // le avisamos al servidor con el propio paquete
+        PlayerInteractEvent.LeftClickEmpty.BUS.addListener(EspadaDeHielo::alGolpearAlAireConCetro);
     }
 
     private static void addCreative(BuildCreativeModeTabContentsEvent event) {
         if (event.getTabKey() == CreativeModeTabs.COMBAT) {
             event.accept(ESPADA_DE_HIELO);
+            event.accept(CETRO_DE_HIELO);
         }
     }
 
@@ -164,5 +217,58 @@ public final class EspadaDeHielo {
         }
 
         espada.intentarGolpeDeEspada(jugador.level(), jugador, stack, paquete.xRot(), paquete.yRot());
+    }
+
+    // Al golpear un bloque con el Cetro de Hielo en la mano principal se lanza una bola
+    // de hielo hacia donde mira el jugador y se cancela el clic (el cetro no sirve para
+    // minar). Mientras se mantiene pulsado el boton el evento se repite (CLIENT_HOLD),
+    // pero la bola solo sale al pulsar (START), como un disparo por clic.
+    // Listener Predicate: devolver true cancela el clic
+    private static boolean alGolpearConCetro(final PlayerInteractEvent.LeftClickBlock event) {
+        if (!(event.getEntity().getMainHandItem().getItem() instanceof CetroDeHieloItem cetro)) {
+            return false;
+        }
+
+        // El cliente solo cancela el minado; la bola la lanza el servidor
+        if (event.getLevel().isClientSide()) {
+            return true;
+        }
+
+        if (event.getAction() != PlayerInteractEvent.LeftClickBlock.Action.START) {
+            return true;
+        }
+
+        return cetro.intentarDisparo(event.getLevel(), event.getEntity(),
+            event.getEntity().getXRot(), event.getEntity().getYRot());
+    }
+
+    // Al golpear el aire con el Cetro de Hielo en la mano principal. Solo se ejecuta en
+    // el cliente: le manda al servidor los angulos de mira para que lance la bola de
+    // hielo en esa direccion (el cliente no modifica el mundo por si mismo)
+    private static void alGolpearAlAireConCetro(final PlayerInteractEvent.LeftClickEmpty event) {
+        if (!(event.getEntity().getMainHandItem().getItem() instanceof CetroDeHieloItem)) {
+            return;
+        }
+
+        CANAL.send(
+            new PaqueteDispararBola(event.getEntity().getXRot(), event.getEntity().getYRot()),
+            PacketDistributor.SERVER.noArg()
+        );
+    }
+
+    // El servidor recibe el aviso de golpe al aire con el cetro y lanza la bola de hielo
+    // (hilo principal via addMain). Valida que el emisor exista y que los angulos sean
+    // numeros sanos antes de usarlos
+    private static void alDispararBolaAlAire(final PaqueteDispararBola paquete, final CustomPayloadEvent.Context contexto) {
+        final var jugador = contexto.getSender();
+        if (jugador == null || !Float.isFinite(paquete.xRot()) || !Float.isFinite(paquete.yRot())) {
+            return;
+        }
+
+        if (!(jugador.getMainHandItem().getItem() instanceof CetroDeHieloItem cetro)) {
+            return;
+        }
+
+        cetro.intentarDisparo(jugador.level(), jugador, paquete.xRot(), paquete.yRot());
     }
 }
