@@ -11,7 +11,7 @@ license="All Rights Reserved"
 [[mods]]
 modId="espadahielo"
 version="1.0.0"
-displayName="Espada de Hielo"
+displayName="Armas de Hielo"
 #updateJSONURL="https://example.com/updates.json" #optional
 #displayURL="https://example.com/" #optional
 #logoFile="espadahielo.png" #optional
