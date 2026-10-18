@@ -5,6 +5,9 @@ import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.item.CreativeModeTabs;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.SoundType;
+import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraftforge.event.BuildCreativeModeTabContentsEvent;
 import net.minecraftforge.event.entity.player.PlayerInteractEvent;
 import net.minecraftforge.event.network.CustomPayloadEvent;
@@ -84,18 +87,43 @@ public final class EspadaDeHielo {
     // Registro diferido de los items del mod, bajo el namespace "espadahielo"
     public static final DeferredRegister<Item> ITEMS = DeferredRegister.create(ForgeRegistries.ITEMS, MODID);
 
+    // Registro diferido de los bloques del mod (por ahora, solo el fuego azul)
+    public static final DeferredRegister<Block> BLOQUES = DeferredRegister.create(ForgeRegistries.BLOCKS, MODID);
+
     // --- Cetro de Hielo ---
     // Durabilidad total del cetro. Cada bola de hielo lanzada consume 1 (igual que una
     // flecha) y la invocacion del elemental consume un 33% de esta cantidad
     public static final int DURABILIDAD_CETRO = 500;
+    // Cadencia de disparo del cetro: ticks de enfriamiento entre bola y bola (10 = medio
+    // segundo). Evita que, al clicar muy rapido (o mantener pulsado), salgan varias bolas
+    // de golpe. Mientras dura, el cetro se ve en el HUD con el enfriamiento encima
+    public static final int TICKS_ENTRE_DISPAROS_CETRO = 10;
 
-    // --- Bola de hielo (clic izquierdo del Cetro de Hielo) ---
+    // --- Bola de hielo del Cetro de Hielo ---
+    // Punto del que SALE la bola: la punta del cetro que el jugador lleva en la mano, no su
+    // cara (igual que el rayo de hielo sale de la espada). Es un desplazamiento respecto a
+    // los ojos, en bloques: a su derecha (donde va la mano), a la altura de la mano (valor
+    // negativo = por encima de los ojos) y hacia delante siguiendo la mirada. El cetro es
+    // mas largo que la espada, asi que la bola sale algo mas lejos que el rayo de hielo
+    public static final double SALIDA_CETRO_DERECHA = 0.72;
+    public static final double SALIDA_CETRO_ABAJO = -0.05;
+    public static final double SALIDA_CETRO_ADELANTE = 1.0;
     // Potencia de la explosion al impactar (la bola de fuego del ghast tiene 1)
     public static final int POTENCIA_EXPLOSION_BOLA = 3;
     // Dano directo del impacto contra la entidad acertada (igual que la bola del ghast)
     public static final float DANIO_IMPACTO_BOLA = 6.0F;
     // Ticks de congelado que aplica el impacto directo contra una entidad viva
     public static final int TICKS_CONGELADO_BOLA = 100;
+    // Radio (en bloques) del area de agua que la bola congela al impactar. Se usa el
+    // radio de la explosion (potencia x2) para que el agua que queda EN el borde del
+    // crater ("al lado") tambien se congele. El agua sobrevive a la explosion, asi que
+    // se congela justo despues de reventar
+    public static final int RADIO_CONGELADO_BOLA = 6;
+    // Radio maximo (en bloques) alrededor del impacto donde se pueden sembrar mechones
+    // de fuego azul en el crater
+    public static final int RADIO_FUEGOS_AZULES = 3;
+    // Maximo de mechones de fuego azul que deja cada explosion
+    public static final int MAX_FUEGOS_AZULES = 6;
 
     // La Espada de Hielo: mismas estadisticas que una espada de hierro (250 durabilidad,
     // 6 de ataque, 1.6 de velocidad de ataque) con efectos extra de hielo
@@ -114,6 +142,22 @@ public final class EspadaDeHielo {
     // solo le da modelo y textura al proyectil (ver BolaDeHieloItem)
     public static final RegistryObject<Item> BOLA_DE_HIELO = ITEMS.register("bola_de_hielo",
         () -> new BolaDeHieloItem(new Item.Properties().setId(ITEMS.key("bola_de_hielo")))
+    );
+
+    // --- Fuego azul ---
+    // Bloque que la explosion de la bola de hielo deja repartido por el crater: se ve y
+    // quema como el fuego comun, pero es azul cielo y ralentiza a quien lo toca. No
+    // aparece en el inventario: solo nace de la explosion. A diferencia del fuego de
+    // almas, no necesita un bloque que lo sostenga (ver FuegoAzulBlock)
+    public static final RegistryObject<Block> FUEGO_AZUL = BLOQUES.register("fuego_azul",
+        () -> new FuegoAzulBlock(BlockBehaviour.Properties.of()
+            .setId(BLOQUES.key("fuego_azul"))
+            .noCollision()
+            .instabreak()
+            .lightLevel(estado -> 15)
+            .sound(SoundType.WOOL)
+            .noLootTable()
+            .replaceable())
     );
 
     // Registro diferido de las entidades del mod, bajo el namespace "espadahielo"
@@ -135,6 +179,7 @@ public final class EspadaDeHielo {
 
         // Registrar el DeferredRegister en el bus de eventos del mod
         ITEMS.register(modBusGroup);
+        BLOQUES.register(modBusGroup);
         ENTIDADES.register(modBusGroup);
 
         // Anadir la espada a la pestana de Combate del inventario creativo

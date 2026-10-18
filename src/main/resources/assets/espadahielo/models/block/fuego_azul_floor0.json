@@ -1,0 +1,6 @@
+{
+  "parent": "minecraft:block/template_fire_floor",
+  "textures": {
+    "fire": "espadahielo:block/fuego_azul_0"
+  }
+}

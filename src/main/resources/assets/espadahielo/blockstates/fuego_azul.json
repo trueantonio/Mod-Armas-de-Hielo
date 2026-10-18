@@ -1,0 +1,90 @@
+{
+  "multipart": [
+    {
+      "apply": [
+        {
+          "model": "espadahielo:block/fuego_azul_floor0"
+        },
+        {
+          "model": "espadahielo:block/fuego_azul_floor1"
+        }
+      ]
+    },
+    {
+      "apply": [
+        {
+          "model": "espadahielo:block/fuego_azul_side0"
+        },
+        {
+          "model": "espadahielo:block/fuego_azul_side1"
+        },
+        {
+          "model": "espadahielo:block/fuego_azul_side_alt0"
+        },
+        {
+          "model": "espadahielo:block/fuego_azul_side_alt1"
+        }
+      ]
+    },
+    {
+      "apply": [
+        {
+          "model": "espadahielo:block/fuego_azul_side0",
+          "y": 90
+        },
+        {
+          "model": "espadahielo:block/fuego_azul_side1",
+          "y": 90
+        },
+        {
+          "model": "espadahielo:block/fuego_azul_side_alt0",
+          "y": 90
+        },
+        {
+          "model": "espadahielo:block/fuego_azul_side_alt1",
+          "y": 90
+        }
+      ]
+    },
+    {
+      "apply": [
+        {
+          "model": "espadahielo:block/fuego_azul_side0",
+          "y": 180
+        },
+        {
+          "model": "espadahielo:block/fuego_azul_side1",
+          "y": 180
+        },
+        {
+          "model": "espadahielo:block/fuego_azul_side_alt0",
+          "y": 180
+        },
+        {
+          "model": "espadahielo:block/fuego_azul_side_alt1",
+          "y": 180
+        }
+      ]
+    },
+    {
+      "apply": [
+        {
+          "model": "espadahielo:block/fuego_azul_side0",
+          "y": 270
+        },
+        {
+          "model": "espadahielo:block/fuego_azul_side1",
+          "y": 270
+        },
+        {
+          "model": "espadahielo:block/fuego_azul_side_alt0",
+          "y": 270
+        },
+        {
+          "model": "espadahielo:block/fuego_azul_side_alt1",
+          "y": 270
+        }
+      ]
+    }
+  ]
+}

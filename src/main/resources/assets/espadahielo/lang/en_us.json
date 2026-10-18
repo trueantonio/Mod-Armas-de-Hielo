@@ -2,5 +2,6 @@
   "item.espadahielo.espada_de_hielo": "Ice Sword",
   "item.espadahielo.cetro_de_hielo": "Ice Scepter",
   "item.espadahielo.bola_de_hielo": "Ice Ball",
-  "entity.espadahielo.bola_de_hielo": "Ice Ball"
+  "entity.espadahielo.bola_de_hielo": "Ice Ball",
+  "block.espadahielo.fuego_azul": "Blue Fire"
 }
