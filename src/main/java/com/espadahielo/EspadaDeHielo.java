@@ -106,12 +106,26 @@ public final class EspadaDeHielo {
     public static final int TICKS_CONJURO_GLACIAROCK = 60;
     // Durabilidad que consume invocar (165 = 33% de las 500 del cetro). Solo se cobra
     // cuando el elemental sale al mundo con bien: si no hay espacio o no hay durabilidad
-    // suficiente, el cetro no gasta nada
+    // suficiente, el cetro no gasta nada. Invocar no destruye nunca el cetro: si el cobro
+    // lo dejaria a 0 (castear con justo estas 165), se cobra una menos y queda a 1
     public static final int DURABILIDAD_CONJURO_GLACIAROCK = 165;
     // Mensaje (traducible) que aparece sobre la barra de casteo si no hay durabilidad
     public static final String MENSAJE_ENERGIA_INSUFICIENTE = "espadahielo.mensaje.energia_insuficiente";
     // Mensaje si al terminar el casteo no cabe el elemental en ningun sitio
     public static final String MENSAJE_SIN_ESPACIO = "espadahielo.mensaje.sin_espacio";
+    // Cada cuantos ticks el jugador "gesticula" con el cetro durante el casteo, ademas del
+    // gesto con el que arranca: son los aspavientos que se ven en tercera persona
+    public static final int TICKS_ENTRE_GESTOS_CONJURO_GLACIAROCK = 10;
+    // Distancias (en bloques) a las que se busca hueco para el elemental. La primera
+    // prueba es siempre delante de la mirada (lado 0 del primer anillo); si ahi no cabe,
+    // se dan anillos completos alrededor del jugador a cada una de estas distancias. La
+    // caja del coloso mide 4 x 7.25 x 4, asi que necesita bastante sitio libre
+    public static final double[] RADIOS_INVOCACION_GLACIAROCK = {4.0, 6.0, 8.0};
+    // Cuantos lados tiene cada anillo de busqueda (8 = un punto por cada cardinal y esquina)
+    public static final int LADOS_INVOCACION_GLACIAROCK = 8;
+    // Radio (en bloques) en el que se busca al Glaciarock que ya tuviera el invocador: solo
+    // puede haber uno vivo a la vez, y al invocar otro el anterior se sustituye
+    public static final double RADIO_REEMPLAZO_GLACIAROCK = 256.0;
 
     // --- Bola de hielo del Cetro de Hielo ---
     // Punto del que SALE la bola: la punta del cetro que el jugador lleva en la mano, no su

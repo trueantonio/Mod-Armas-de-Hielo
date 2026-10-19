@@ -101,9 +101,12 @@ public class BolaDeHielo extends Fireball {
      *
      * Si hay un bloque justo delante, el avance se recorta para que la bola no nazca dentro
      * de el (reventaria pegada a la cara del jugador): en ese caso nace pegada a la pared.
+     *
+     * Es publico porque el casteo del Glaciarock tambien lo usa para soltar las particulas
+     * de hielo justo en la punta del cetro (ver CetroDeHieloItem)
      */
-    private static Vec3 puntoDeSalidaDelCetro(final Level level, final LivingEntity tirador,
-                                              final Vec3 direccion) {
+    public static Vec3 puntoDeSalidaDelCetro(final Level level, final LivingEntity tirador,
+                                             final Vec3 direccion) {
         final Vec3 ojo = tirador.getEyePosition();
 
         // "Derecha" del jugador a partir de su giro horizontal (yaw). Se calcula con el yaw
