@@ -46,6 +46,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.material.Fluids;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec2;
 import net.minecraft.world.phys.Vec3;
 
 /**
@@ -145,6 +146,40 @@ public class Glaciarock extends TamableAnimal implements GeoEntity {
     public static final int TICKS_ENTRE_SALTOS = 20;
     public static final int ALTURA_MAXIMA_SALTO = 3;
 
+    // --- Posesion: clic derecho + agachado con el cetro para meterse dentro ---
+    // Distancia a la que se le busca el Glaciarock al jugador que pide la posesion
+    public static final double RADIO_POSESION_GLACIAROCK = 64.0;
+    // Ticks que tiene que llevar el coloso sin jinete para que alguien pueda entrar. Hace
+    // falta sobre todo por el gesto de salir: agacharse para bajarse es tambien el de
+    // entrar, y sin esta espera el jugador que se acaba de bajar volveria a montarse solo
+    public static final int TICKS_ESPERA_POSESION_GLACIAROCK = 20;
+    // Cuantos ticks se recuerda una peticion de posesion que todavia no se ha podido
+    // atender. Montar agachado esta prohibido (el juego baja al jinete al tick siguiente,
+    // ver Player#rideTick), asi que hay que esperar a que el jugador suelte el agachado
+    public static final int TICKS_CADUCIDAD_POSESION_GLACIAROCK = 100;
+    // Margen entre salto y salto del piloto: la mitad que el de la IA (para que no parezca
+    // que va botando solo), pero lo bastante corto como para saltar al ritmo que se quiera
+    public static final int TICKS_ENTRE_SALTOS_JINETE = 10;
+    // Donde se sienta el piloto, en unidades del modelo base (SIN la escala): a la altura
+    // de los ojos de la cabeza y algo por delante del centro del cuerpo. El atributo SCALE
+    // multiplica tambien este punto por 5, como al resto de la hitbox (la camara queda a
+    // 0.88 x 5 = 4.4 sobre los pies del coloso, mas los 1.62 de los ojos del jugador, o sea
+    // a 6 sobre el suelo: la altura de la cabeza del modelo)
+    public static final Vec3 SITIO_JINETE_GLACIAROCK = new Vec3(0.0, 0.88, 0.20);
+    // Impulso hacia arriba con el que sale despedido el piloto al morir el coloso ("como
+    // si saliese del robot")
+    public static final double IMPULSO_EYECCION_GLACIAROCK = 1.2;
+    // Ticks de caida lenta que se le dan al salir despedido: el coloso revienta dejando un
+    // crater y el piloto sale volando por encima de el, pero sin estamparse contra el suelo
+    public static final int TICKS_CAIDA_LENTA_EYECCION_GLACIAROCK = 120;
+    // Fraccion de su salud maxima por debajo de la cual el coloso expulsa al piloto por su
+    // cuenta, antes de que lo maten: asi no le pilla la explosion de dentro. Estando tan
+    // tocado tampoco deja que nadie vuelva a meterse (saldria despedido al momento)
+    public static final float FRACCION_EXPULSION_JINETE_GLACIAROCK = 0.25F;
+    // Cono de la mirada (en grados, mitad a cada lado) dentro del que el piloto busca a
+    // quien pegar al hacer clic izquierdo desde dentro
+    public static final double ANGULO_GOLPE_JINETE = 65.0;
+
     // Potencia de la explosion de su muerte: la de la bola de hielo (3) por 3. Ojo, que un
     // crater de potencia 9 se lleva por delante unos 12 bloques de terreno
     public static final float POTENCIA_EXPLOSION_MUERTE =
@@ -186,6 +221,16 @@ public class Glaciarock extends TamableAnimal implements GeoEntity {
     private int ticksDesdeUltimoPaso;
     // Contador para no ponerse a brincar contra un obstaculo en cada tick
     private int ticksDesdeUltimoSalto;
+
+    // --- Estado de la posesion (el jugador pilotando desde dentro) ---
+    // Jugador que ha pedido entrar y todavia no ha podido (ver #actualizarPosesionPendiente)
+    private Player jinetePendiente;
+    // Ticks que lleva el coloso sin jinete
+    private int ticksSinJinete = TICKS_ESPERA_POSESION_GLACIAROCK;
+    // Ticks que quedan para olvidar la peticion de posesion pendiente
+    private int ticksCaducidadPosesion;
+    // Cooldown del salto del piloto (el de #intentarSaltoDeObstaculo es de otro caso)
+    private int ticksDesdeUltimoSaltoJinete;
 
     /**
      * Constructor vacio que usa el juego al crear la entidad en el cliente (el servidor
@@ -318,6 +363,14 @@ public class Glaciarock extends TamableAnimal implements GeoEntity {
         //    mas cercano: sin dueno no sigue a nadie ni muere con su invocador
         this.adoptarDueno(servidor);
 
+        // 0.b) Si alguien ha pedido posesion con el cetro, se le mete dentro en cuanto se
+        //      pueda (ver #actualizarPosesionPendiente)
+        this.actualizarPosesionPendiente();
+
+        // 0.c) Si al coloso le queda poca vida y va pilotado, se saca al piloto antes de que
+        //      lo maten: asi no le pilla la explosion de dentro (ver #expulsarJineteSiEstaDebil)
+        this.expulsarJineteSiEstaDebil(servidor);
+
         // 1) El golpe pendiente cae al final de la animacion de ataque
         if (this.ticksHastaDanio > 0) {
             this.ticksHastaDanio--;
@@ -327,7 +380,7 @@ public class Glaciarock extends TamableAnimal implements GeoEntity {
         }
 
         // 2) Andando: congelar el agua alrededor y soltar la estampida pesada
-        if (this.onGround() && this.estaMoviendose()) {
+        if (this.onGround() && this.estaMoviendoseDeVerdad()) {
             if (this.tickCount % TICKS_ENTRE_CONGELADAS == 0) {
                 this.congelarAguaAlAndar(servidor);
             }
@@ -339,11 +392,15 @@ public class Glaciarock extends TamableAnimal implements GeoEntity {
             }
         }
 
-        // 3) Salto de obstaculo: si se topa con un repecho de 2-3 bloques, se impulsa
+        // 3) Salto de obstaculo: si se topa con un repecho de 2-3 bloques, se impulsa. Con
+        //    jinete no se hace: el que salta entonces es el piloto con la barra espaciadora
+        //    (ver #tickRidden)
         if (this.ticksDesdeUltimoSalto < TICKS_ENTRE_SALTOS) {
             this.ticksDesdeUltimoSalto++;
         }
-        this.intentarSaltoDeObstaculo();
+        if (!this.tieneJinete()) {
+            this.intentarSaltoDeObstaculo();
+        }
 
         // 4) Tirar de la aggro de los hostiles de alrededor: le atacan a el igual que
         //    atacarian a un jugador (si no, le ignoran hasta que el pega primero). En
@@ -470,6 +527,25 @@ public class Glaciarock extends TamableAnimal implements GeoEntity {
     }
 
     /**
+     * Movimiento real del coloso para la logica de servidor (congelar el agua, los pasos).
+     * Ademas del delta de movimiento se mira el desplazamiento crudo del tick
+     * ({@code x - xo}) porque, cuando lo pilota un jugador, el movimiento lo simula el
+     * cliente del piloto y en el servidor el delta se queda a cero (ver
+     * {@code LivingEntity#travelRidden}, que lo pone a ZERO en el lado que no simula):
+     * con {@link #estaMoviendose()} solo, los efectos no se dispararian nunca
+     */
+    private boolean estaMoviendoseDeVerdad() {
+        if (this.estaMoviendose()) {
+            return true;
+        }
+
+        final double dx = this.getX() - this.xo;
+        final double dz = this.getZ() - this.zo;
+
+        return dx * dx + dz * dz > 1.0E-6D;
+    }
+
+    /**
      * Senal de movimiento para la animacion de "walk". En cliente las entidades ajenas
      * no simulan nada: solo interpolan las posiciones que manda el servidor, asi que su
      * deltaMovement se queda en cero y con {@link #estaMoviendose()} la animacion nunca
@@ -480,14 +556,250 @@ public class Glaciarock extends TamableAnimal implements GeoEntity {
      * en servidor (alli el delta si es real). Con cualquiera de las tres basta
      */
     private boolean seEstaMoviendoseParaAnimacion() {
-        if (this.walkAnimation.isMoving() || this.estaMoviendose()) {
-            return true;
+        return this.walkAnimation.isMoving() || this.estaMoviendoseDeVerdad();
+    }
+
+    // --- Posesion: el jugador se mete dentro del coloso y lo pilota ---
+
+    /**
+     * El Glaciarock vivo y domesticado que tenga ese jugador mas cerca dentro del radio
+     * (null si no tiene ninguno a mano). Es lo que busca el cetro al pedir la posesion
+     */
+    public static Glaciarock buscarDeJugador(final Player jugador, final double radio) {
+        Glaciarock mejor = null;
+        double mejorDistancia = radio * radio;
+
+        for (final Glaciarock candidato : jugador.level().getEntitiesOfClass(Glaciarock.class,
+                jugador.getBoundingBox().inflate(radio),
+                elemental -> elemental.isAlive() && elemental.isOwnedBy(jugador))) {
+            final double distancia = jugador.distanceToSqr(candidato);
+            if (distancia <= mejorDistancia) {
+                mejorDistancia = distancia;
+                mejor = candidato;
+            }
         }
 
-        final double dx = this.getX() - this.xo;
-        final double dz = this.getZ() - this.zo;
+        return mejor;
+    }
 
-        return dx * dx + dz * dz > 1.0E-6D;
+    // Lo esta pilotando un jugador
+    public boolean tieneJinete() {
+        return this.getFirstPassenger() instanceof Player;
+    }
+
+    /**
+     * Peticion de posesion (clic derecho y agachado con el cetro en la mano). No se monta
+     * al jugador aqui mismo: montar agachado esta prohibido (el juego mira
+     * {@code isShiftKeyDown} y le bajaria al tick siguiente, ver Player#rideTick), asi que
+     * se apunta la peticion y es el tick del coloso el que monta cuando el jugador suelte
+     * el agachado (ver {@link #actualizarPosesionPendiente}). La peticion caduca a los
+     * {@value #TICKS_CADUCIDAD_POSESION_GLACIAROCK} ticks
+     */
+    public void pedirPosesion(final Player jugador) {
+        this.jinetePendiente = jugador;
+        this.ticksCaducidadPosesion = TICKS_CADUCIDAD_POSESION_GLACIAROCK;
+    }
+
+    /**
+     * Repasa la peticion de posesion pendiente y, si ya se puede, mete al jugador dentro.
+     * Se esperan dos cosas: que el jugador suelte el agachado (montar agachado duraria un
+     * tick) y que hayan pasado {@value #TICKS_ESPERA_POSESION_GLACIAROCK} ticks sin jinete
+     * (agacharse para salir es el mismo gesto que para entrar: sin esa espera, el jugador
+     * que se acaba de bajar volveria a montarse solo)
+     */
+    private void actualizarPosesionPendiente() {
+        if (this.tieneJinete()) {
+            this.ticksSinJinete = 0;
+        } else if (this.ticksSinJinete < TICKS_ESPERA_POSESION_GLACIAROCK) {
+            this.ticksSinJinete++;
+        }
+
+        if (this.jinetePendiente == null) {
+            return;
+        }
+
+        final Player jugador = this.jinetePendiente;
+
+        // Peticiones que ya no valen: caducada, jugador muerto, en otra dimension,
+        // ya montado en algo o coloso que ya no es suyo
+        if (--this.ticksCaducidadPosesion <= 0
+                || !this.isAlive() || !this.isOwnedBy(jugador)
+                || !jugador.isAlive() || jugador.level() != this.level()
+                || jugador.isPassenger()) {
+            this.jinetePendiente = null;
+            return;
+        }
+
+        // Todavia no toca: sigue agachado o el coloso acaba de quedarse sin jinete
+        if (jugador.isShiftKeyDown()
+                || this.ticksSinJinete < TICKS_ESPERA_POSESION_GLACIAROCK) {
+            return;
+        }
+
+        this.jinetePendiente = null;
+        this.montarJinete(jugador);
+    }
+
+    /**
+     * Mete al jugador dentro del coloso. El jugador desaparece del mundo (invisible) y los
+     * golpes se los come el Glaciarock entero: el dano al piloto lo cancela
+     * {@code EspadaDeHielo#esProtegidoPorElGlaciarock} mientras vaya montado. El movimiento
+     * lo lleva el propio jugador desde su cliente (el "conductor" del vehiculo es el, ver
+     * {@link #getControllingPassenger}) y para salir basta con agacharse, como de cualquier
+     * montura. Todo esto es cosa del servidor
+     */
+    private void montarJinete(final Player jugador) {
+        // force = true: montar esta prohibido mientras el jugador va agachado
+        // (Entity#canRide) y aqui ya se ha esperado a que lo suelte
+        if (!jugador.startRiding(this, true, true)) {
+            return;
+        }
+
+        jugador.setInvisible(true);
+        this.ticksSinJinete = 0;
+
+        final ServerLevel servidor = (ServerLevel) this.level();
+        servidor.sendParticles(ParticleTypes.SNOWFLAKE, jugador.getX(), jugador.getY() + 1.0,
+            jugador.getZ(), 60, 0.6, 0.8, 0.6, 0.05);
+        servidor.playSound(null, this.getX(), this.getY(), this.getZ(),
+            SoundEvents.GLASS_BREAK, SoundSource.NEUTRAL, 1.5F, 0.6F);
+
+        // Como salir se lo dice el juego solo al montar ("pulsa <tecla> para desmontar",
+        // ver ClientPacketListener#handleSetEntityPassengersPacket)
+    }
+
+    /**
+     * El jugador se ha bajado del coloso (agachandose, porque ha muerto o porque ha
+     * desaparecido): se le devuelve la visibilidad que le quito la posesion. Se hace desde
+     * {@link #removePassenger} para que valga cualquier via de salida, y solo en el
+     * servidor, que es quien manda sobre ese estado
+     */
+    private void alBajarElJinete(final Player jugador) {
+        jugador.setInvisible(false);
+        this.ticksSinJinete = 0;
+        this.jinetePendiente = null;
+    }
+
+    @Override
+    protected void removePassenger(final Entity pasajero) {
+        super.removePassenger(pasajero);
+
+        if (!this.level().isClientSide() && pasajero instanceof Player jugador) {
+            this.alBajarElJinete(jugador);
+        }
+    }
+
+    /**
+     * Con la vida por los suelos ({@value #FRACCION_EXPULSION_JINETE_GLACIAROCK} de la
+     * maxima o menos) el coloso no se deja pilotar: cualquiera que se meta dentro saldria
+     * despedido al tick siguiente, asi que mejor no dejarle entrar y avisar. El cetro lo
+     * consulta antes de pedir la posesion
+     */
+    public boolean estaDemasiadoHeridoParaPilotar() {
+        return this.getHealth() <= this.getMaxHealth() * FRACCION_EXPULSION_JINETE_GLACIAROCK;
+    }
+
+    /**
+     * Si le queda poca vida y lleva piloto, le saca de dentro antes de que lo maten: asi no
+     * le pilla la explosion de dentro cuando reviente. Mismo empujon que el de la muerte
+     * (ver {@link #expulsarAlJinete}), que es el gesto de "salir del robot"
+     */
+    private void expulsarJineteSiEstaDebil(final ServerLevel servidor) {
+        if (this.tieneJinete() && this.estaDemasiadoHeridoParaPilotar()) {
+            this.expulsarAlJinete(servidor);
+        }
+    }
+
+    /**
+     * Expulsion del piloto: sale disparado hacia arriba, "como si saliese del robot", con
+     * unos ticks de caida lenta para que no se mate al caer. Se usa al morir el coloso (y
+     * entonces debajo le queda el crater de su propia explosion, por eso se le saca ANTES
+     * de reventar) y tambien antes, cuando le queda poca vida (ver
+     * {@link #expulsarJineteSiEstaDebil})
+     */
+    private void expulsarAlJinete(final ServerLevel servidor) {
+        if (!(this.getFirstPassenger() instanceof Player jugador)) {
+            return;
+        }
+
+        // stopRiding le devuelve la visibilidad (removePassenger)
+        jugador.stopRiding();
+        jugador.setDeltaMovement(0.0, IMPULSO_EYECCION_GLACIAROCK, 0.0);
+        // Sin esto el cliente no se entera del empujon: el movimiento solo viaja a los
+        // clientes de las entidades marcadas
+        jugador.hurtMarked = true;
+        jugador.addEffect(new MobEffectInstance(MobEffects.SLOW_FALLING,
+            TICKS_CAIDA_LENTA_EYECCION_GLACIAROCK));
+
+        servidor.sendParticles(ParticleTypes.SNOWFLAKE, jugador.getX(),
+            jugador.getY() + 0.5, jugador.getZ(), 40, 0.5, 0.5, 0.5, 0.2);
+        servidor.playSound(null, jugador.getX(), jugador.getY(), jugador.getZ(),
+            SoundEvents.GLASS_BREAK, SoundSource.NEUTRAL, 1.5F, 1.4F);
+    }
+
+    // --- Control del jinete: el piloto lleva al coloso ---
+
+    /**
+     * Quien lleva al coloso es su pasajero si es un jugador. Es la pieza clave de toda la
+     * posesion: en 26.2 el movimiento del vehiculo lo simula el cliente de quien lo lleva
+     * (el servidor solo le copia la posicion, ver {@code Entity#isClientAuthoritative}), y
+     * ese "quien lo lleva" sale de aqui. Ademas, con un jugador al mando el servidor deja
+     * de considerar al coloso una IA: ni objetivos ni paseos (ver {@code isEffectiveAi})
+     *
+     * Mob solo acepta mobs, asi que hay que reescribirlo para que valga un jugador
+     */
+    @Override
+    public LivingEntity getControllingPassenger() {
+        if (this.getFirstPassenger() instanceof Player jugador) {
+            return jugador;
+        }
+
+        return super.getControllingPassenger();
+    }
+
+    /**
+     * Los controles del piloto, calcados de los de un caballo: adelante y atras con el
+     * movimiento, lateral a media velocidad y marcha atras a un cuarto (un coloso de 5x va
+     * sobrado por delante, pero dando marcha atras es torpe)
+     */
+    @Override
+    protected Vec3 getRiddenInput(final Player jinete, final Vec3 entradaPropia) {
+        final float lateral = jinete.xxa * 0.5F;
+        float adelante = jinete.zza;
+        if (adelante <= 0.0F) {
+            adelante *= 0.25F;
+        }
+
+        return new Vec3(lateral, 0.0, adelante);
+    }
+
+    @Override
+    protected float getRiddenSpeed(final Player jinete) {
+        return (float) this.getAttributeValue(Attributes.MOVEMENT_SPEED);
+    }
+
+    /**
+     * Cada tick de piloto: el coloso gira con la mirada de quien le lleva (la mitad de
+     * inclinacion arriba/abajo, como un caballo) y salta con la barra espaciadora, con un
+     * margen de {@value #TICKS_ENTRE_SALTOS_JINETE} ticks entre salto y salto. El salto
+     * solo se pide donde se simula el movimiento (el cliente del piloto), que es el que
+     * manda
+     */
+    @Override
+    protected void tickRidden(final Player jinete, final Vec3 entrada) {
+        final Vec2 rotacion = new Vec2(jinete.getXRot() * 0.5F, jinete.getYRot());
+        this.setRot(rotacion.y, rotacion.x);
+        this.yRotO = this.yBodyRot = this.yHeadRot = this.getYRot();
+
+        if (this.ticksDesdeUltimoSaltoJinete < TICKS_ENTRE_SALTOS_JINETE) {
+            this.ticksDesdeUltimoSaltoJinete++;
+        }
+
+        if (this.isLocalInstanceAuthoritative() && this.onGround() && jinete.isJumping()
+                && this.ticksDesdeUltimoSaltoJinete >= TICKS_ENTRE_SALTOS_JINETE) {
+            this.ticksDesdeUltimoSaltoJinete = 0;
+            this.jumpFromGround();
+        }
     }
 
     // --- Ataque cuerpo a cuerpo ---
@@ -495,10 +807,11 @@ public class Glaciarock extends TamableAnimal implements GeoEntity {
     /**
      * Lanza la animacion de ataque y apunta el golpe: no hace dano todavia. El dano se
      * aplica {@value #TICKS_ATAQUE_GLACIAROCK} ticks despues, cuando la animacion termina
-     * (ver {@link #aplicarGolpePendiente})
+     * (ver {@link #aplicarGolpePendiente}). Con objetivo null solo se lanza el gesto (el
+     * puñetazo al aire del piloto)
      */
     private void iniciarGolpe(final LivingEntity objetivo) {
-        this.golpePendienteId = objetivo.getId();
+        this.golpePendienteId = objetivo == null ? -1 : objetivo.getId();
         this.ticksHastaDanio = TICKS_ATAQUE_GLACIAROCK;
         // Se llama del servidor: GeckoLib manda el aviso a los clientes que la vean
         this.triggerAnim(CONTROL_ATAQUE, NOMBRE_ANIM_ATAQUE);
@@ -556,6 +869,64 @@ public class Glaciarock extends TamableAnimal implements GeoEntity {
     protected void playAttackSound() {
         this.level().playSound(null, this.getX(), this.getY(), this.getZ(),
             SoundEvents.GLASS_BREAK, SoundSource.NEUTRAL, 1.5F, 0.7F);
+    }
+
+    /**
+     * El puñetazo que pide el piloto con el clic izquierdo (ver
+     * {@link PaqueteAtaqueGlaciarock}). Es el golpe de siempre - animacion y dano al final
+     * de los {@value #TICKS_ATAQUE_GLACIAROCK} ticks - pero eligiendo el objetivo por
+     * delante de la mirada, que es lo que espera quien apunta. Sin nadie al que darle se
+     * lanza igual el gesto: el puñetazo al aire
+     */
+    public void golpearComoJinete() {
+        if (!this.isAlive() || this.enMedioDeGolpe() || !this.tieneJinete()) {
+            return;
+        }
+
+        this.iniciarGolpe(this.buscarObjetivoDelJinete());
+    }
+
+    /**
+     * A quien le pega el piloto: el ser vivo mas cercano que tenga dentro del cono de la
+     * mirada ({@value #ANGULO_GOLPE_JINETE} grados a cada lado) y del alcance del golpe.
+     * Quedan fuera el propio coloso, su piloto, quien viaje con el y las mascotas del
+     * piloto (y sus aliados): a esos no les pega su propio elemental
+     */
+    private LivingEntity buscarObjetivoDelJinete() {
+        final Vec3 mirada = this.getViewVector(1.0F);
+        final double cosenoMinimo = Math.cos(Math.toRadians(ANGULO_GOLPE_JINETE));
+        final Player jinete = this.getFirstPassenger() instanceof Player jugador ? jugador : null;
+
+        LivingEntity mejor = null;
+        double mejorDistancia = Double.MAX_VALUE;
+
+        for (final LivingEntity candidato : this.level().getEntitiesOfClass(LivingEntity.class,
+                this.getBoundingBox().inflate(ALCANCE_GOLPE_GLACIAROCK))) {
+            if (candidato == this || candidato == jinete || !candidato.isAlive()
+                    || candidato.isSpectator() || candidato.getVehicle() == this
+                    || (jinete != null && this.esAliadoDelJinete(candidato, jinete))) {
+                continue;
+            }
+
+            final Vec3 haciaEl = candidato.position().subtract(this.position()).normalize();
+            if (mirada.dot(haciaEl) < cosenoMinimo) {
+                continue;
+            }
+
+            final double distancia = this.distanceToSqr(candidato);
+            if (distancia < mejorDistancia) {
+                mejorDistancia = distancia;
+                mejor = candidato;
+            }
+        }
+
+        return mejor;
+    }
+
+    // Las mascotas del piloto (y sus aliados) no son objetivo de su propio coloso
+    private boolean esAliadoDelJinete(final LivingEntity candidato, final Player jinete) {
+        return candidato.isAlliedTo(jinete)
+            || (candidato instanceof TamableAnimal mascota && mascota.isOwnedBy(jinete));
     }
 
     /**
@@ -646,6 +1017,8 @@ public class Glaciarock extends TamableAnimal implements GeoEntity {
         super.die(fuente);
 
         if (this.level() instanceof ServerLevel servidor) {
+            // Si iba pilotado, el piloto sale despedido hacia arriba antes de reventar
+            this.expulsarAlJinete(servidor);
             ExplosionDeHielo.explotar(servidor, this, this.position(), this.getOwner(),
                 POTENCIA_EXPLOSION_MUERTE);
         }
@@ -671,10 +1044,13 @@ public class Glaciarock extends TamableAnimal implements GeoEntity {
     }
 
     // El tampoco atraviesa a los jugadores (ni a nadie con lo que choque): cualquier otra
-    // entidad la aparta con el empuje normal en vez de dejarla pasar
+    // entidad la aparta con el empuje normal en vez de dejarla pasar. Con su propio jinete
+    // no choca: va DENTRO de su caja (el mismo detalle que cuida el bote, ver
+    // Entity#isPassengerOfSameVehicle)
     @Override
     public boolean canCollideWith(final Entity entidad) {
-        return entidad instanceof Player || entidad.canBeCollidedWith(this);
+        return !this.isPassengerOfSameVehicle(entidad)
+            && (entidad instanceof Player || entidad.canBeCollidedWith(this));
     }
 
     // No es empujable: ni el jugador ni los mobs lo mueven de donde esta

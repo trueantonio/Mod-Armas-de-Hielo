@@ -1,6 +1,7 @@
 package com.espadahielo;
 
 import net.minecraft.core.registries.Registries;
+import net.minecraft.tags.DamageTypeTags;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.item.CreativeModeTabs;
@@ -10,6 +11,7 @@ import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraftforge.event.BuildCreativeModeTabContentsEvent;
 import net.minecraftforge.event.entity.EntityAttributeCreationEvent;
+import net.minecraftforge.event.entity.living.LivingAttackEvent;
 import net.minecraftforge.event.entity.player.PlayerInteractEvent;
 import net.minecraftforge.event.network.CustomPayloadEvent;
 import net.minecraftforge.fml.common.Mod;
@@ -31,12 +33,13 @@ public final class EspadaDeHielo {
     // de los clics izquierdos al aire con cada arma, ya que Minecraft no manda nada al
     // servidor en ese caso (el evento LeftClickEmpty existe solo en el cliente)
     public static final SimpleChannel CANAL = ChannelBuilder.named(MODID + ":main")
-        .networkProtocolVersion(2)
+        .networkProtocolVersion(3)
         .simpleChannel()
             .play()
                 .serverbound()
                     .addMain(PaqueteGolpearAgua.class, PaqueteGolpearAgua.STREAM_CODEC, EspadaDeHielo::alGolpearAguaVacia)
                     .addMain(PaqueteDispararBola.class, PaqueteDispararBola.STREAM_CODEC, EspadaDeHielo::alDispararBolaAlAire)
+                    .addMain(PaqueteAtaqueGlaciarock.class, PaqueteAtaqueGlaciarock.STREAM_CODEC, EspadaDeHielo::alAtacarConGlaciarock)
         .build();
 
     // Duracion del debuff de ralentizacion al golpear (100 ticks = 5 segundos)
@@ -113,6 +116,13 @@ public final class EspadaDeHielo {
     public static final String MENSAJE_ENERGIA_INSUFICIENTE = "espadahielo.mensaje.energia_insuficiente";
     // Mensaje si al terminar el casteo no cabe el elemental en ningun sitio
     public static final String MENSAJE_SIN_ESPACIO = "espadahielo.mensaje.sin_espacio";
+
+    // --- Posesion del Glaciarock (clic derecho + agachado con el cetro) ---
+    // Mensaje si el jugador pide meterse dentro y no tiene ningun Glaciarock cerca
+    public static final String MENSAJE_SIN_GLACIAROCK = "espadahielo.mensaje.sin_glaciarock";
+    // Mensaje si el Glaciarock de al lado esta demasiado herido para pilotarlo (se saldria
+    // al momento por su cuenta, ver Glaciarock#estaDemasiadoHeridoParaPilotar)
+    public static final String MENSAJE_GLACIAROCK_HERIDO = "espadahielo.mensaje.glaciarock_herido";
     // Cada cuantos ticks el jugador "gesticula" con el cetro durante el casteo, ademas del
     // gesto con el que arranca: son los aspavientos que se ven en tercera persona
     public static final int TICKS_ENTRE_GESTOS_CONJURO_GLACIAROCK = 10;
@@ -210,6 +220,10 @@ public final class EspadaDeHielo {
     public static final RegistryObject<EntityType<Glaciarock>> ENTIDAD_GLACIAROCK = ENTIDADES.register("glaciarock",
         () -> EntityType.Builder.<Glaciarock>of(Glaciarock::new, MobCategory.MISC)
             .sized(Glaciarock.ANCHO_BASE_GLACIAROCK, Glaciarock.ALTO_BASE_GLACIAROCK)
+            // Sitio donde se sienta el piloto al poseerlo (ver Glaciarock#SITIO_JINETE...):
+            // el punto va en unidades del modelo base y el juego lo multiplica por la
+            // escala del atributo SCALE, igual que la hitbox
+            .passengerAttachments(Glaciarock.SITIO_JINETE_GLACIAROCK)
             .clientTrackingRange(10)
             .updateInterval(3)
             .build(ENTIDADES.key("glaciarock"))
@@ -246,6 +260,13 @@ public final class EspadaDeHielo {
         // Atributos del Glaciarock (salud, ataque, escala...): sin esto, cualquier
         // instancia de la entidad reventaria al primer golpe (0 de salud maxima)
         EntityAttributeCreationEvent.BUS.addListener(EspadaDeHielo::alCrearAtributos);
+
+        // El piloto de un Glaciarock no recibe dano: los golpes se los come el coloso
+        // entero (ver #esProtegidoPorElGlaciarock). Va por evento y no con la bandera de
+        // invulnerabilidad del jugador porque esa bandera SI se guarda en los datos del
+        // jugador (Entity#saveWithoutId): si se desconectara pilotando, volveria al mundo
+        // invulnerable para siempre. Esto, en cambio, solo vale mientras va montado
+        LivingAttackEvent.BUS.addListener(EspadaDeHielo::esProtegidoPorElGlaciarock);
     }
 
     // Forge pregunta por los atributos de cada entidad registrada despues de la
@@ -367,5 +388,34 @@ public final class EspadaDeHielo {
         }
 
         cetro.intentarDisparo(jugador.level(), jugador, paquete.xRot(), paquete.yRot());
+    }
+
+    // El servidor recibe el aviso de que el piloto ha hecho clic izquierdo dentro del
+    // Glaciarock (el cliente cancela el puñetazo del jugador, ver ClienteMod) y le hace
+    // pegar al coloso. Se comprueba que de verdad vaya montado en un elemental suyo: asi el
+    // paquete no sirve para nada si no se esta poseyendo
+    private static void alAtacarConGlaciarock(final PaqueteAtaqueGlaciarock paquete,
+                                              final CustomPayloadEvent.Context contexto) {
+        final var jugador = contexto.getSender();
+        if (jugador == null) {
+            return;
+        }
+
+        if (jugador.getVehicle() instanceof Glaciarock elemental
+                && elemental.isOwnedBy(jugador)) {
+            elemental.golpearComoJinete();
+        }
+    }
+
+    // Mientras el jugador va DENTRO de su Glaciarock no recibe dano: los golpes, las
+    // explosiones, el fuego, la asfixia... se los come el coloso, que es el que esta en el
+    // mundo. Es lo mismo que haria la bandera de invulnerabilidad del jugador, pero sin
+    // dejar rastro en sus datos (ver el comentario del registro).
+    // Listener Predicate: devolver true cancela el golpe.
+    // Se dejan pasar los danos que atraviesan la invulnerabilidad (/kill, caer al vacio):
+    // exactamente los mismos que ignoraria esa bandera
+    private static boolean esProtegidoPorElGlaciarock(final LivingAttackEvent evento) {
+        return evento.getEntity().getVehicle() instanceof Glaciarock
+            && !evento.getSource().is(DamageTypeTags.BYPASSES_INVULNERABILITY);
     }
 }

@@ -6,5 +6,7 @@
   "entity.espadahielo.glaciarock": "Glaciarock",
   "block.espadahielo.fuego_azul": "Blue Fire",
   "espadahielo.mensaje.energia_insuficiente": "Not enough energy left to summon the Glaciarock",
-  "espadahielo.mensaje.sin_espacio": "There is not enough room to summon the Glaciarock"
+  "espadahielo.mensaje.sin_espacio": "There is not enough room to summon the Glaciarock",
+  "espadahielo.mensaje.sin_glaciarock": "You have no Glaciarock nearby to possess",
+  "espadahielo.mensaje.glaciarock_herido": "The Glaciarock is too badly hurt to be piloted"
 }

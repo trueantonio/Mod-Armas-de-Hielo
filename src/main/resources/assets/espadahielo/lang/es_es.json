@@ -6,5 +6,7 @@
   "entity.espadahielo.bola_de_hielo": "Bola de Hielo",
   "entity.espadahielo.glaciarock": "Glaciarock",
   "espadahielo.mensaje.energia_insuficiente": "Energia insuficiente para invocar al Glaciarock",
-  "espadahielo.mensaje.sin_espacio": "No hay espacio suficiente para invocar al Glaciarock"
+  "espadahielo.mensaje.sin_espacio": "No hay espacio suficiente para invocar al Glaciarock",
+  "espadahielo.mensaje.sin_glaciarock": "No tienes ningun Glaciarock cerca para poseer",
+  "espadahielo.mensaje.glaciarock_herido": "El Glaciarock esta demasiado herido para pilotarlo"
 }

@@ -41,6 +41,12 @@ import net.minecraft.world.phys.Vec3;
  *    la mirada y, si ahi no cabe, en el primer hueco libre alrededor del jugador; sin
  *    hueco no se invoca nada ({@link EspadaDeHielo#MENSAJE_SIN_ESPACIO}). Solo puede
  *    haber un Glaciarock por invocador: al invocar otro, el anterior desaparece.
+ *  - Clic derecho agachado: posesion. Si tienes un Glaciarock cerca te metes DENTRO de el
+ *    y lo pilotas (anda, salta y pega por ti) hasta que te agaches para salir o el coloso
+ *    muera, y entonces sales despedido hacia arriba. Si al coloso le queda poca vida te
+ *    expulsa el solo para que no te pille su estallido, y mientras este asi de tocado ni
+ *    te deja entrar ({@link EspadaDeHielo#MENSAJE_GLACIAROCK_HERIDO}). Mientras pilotas,
+ *    el cetro no hace nada ({@link Glaciarock#buscarDeJugador})
  */
 public class CetroDeHieloItem extends Item {
     public CetroDeHieloItem(final Item.Properties properties) {
@@ -113,6 +119,18 @@ public class CetroDeHieloItem extends Item {
         // El conjuro es cosa de la mano que lleva el cetro
         if (hand != InteractionHand.MAIN_HAND) {
             return InteractionResult.PASS;
+        }
+
+        // Ya estas pilotando al coloso: desde dentro el cetro no hace nada (ni conjuros ni
+        // bolas; para salir, agachate como de cualquier montura)
+        if (player.getVehicle() instanceof Glaciarock) {
+            return InteractionResult.FAIL;
+        }
+
+        // Agachado el cetro no invoca: sirve para meterse DENTRO del Glaciarock que ya
+        // tengas cerca (ver #intentarPosesion)
+        if (player.isShiftKeyDown()) {
+            return intentarPosesion(level, player);
         }
 
         if (!sePuedeEmpezarElConjuro(player)) {
@@ -333,6 +351,38 @@ public class CetroDeHieloItem extends Item {
     // Se puede empezar el conjuro de pie y en seco (ni en el aire ni nadando)
     private static boolean sePuedeEmpezarElConjuro(final Player jugador) {
         return jugador.onGround() && !jugador.isInWater() && !jugador.isSwimming();
+    }
+
+    /**
+     * Posesion: clic derecho y agachado con el cetro en la mano. Se busca el Glaciarock
+     * vivo que tenga mas cerca el jugador ({@link Glaciarock#buscarDeJugador}) y se le pide
+     * que le deje entrar. La entrada no puede hacerse aqui mismo: el juego desmonta a quien
+     * va agachado, asi que el jugador tiene que soltar el agachado primero y es el tick del
+     * coloso el que le mete dentro (ver {@link Glaciarock#pedirPosesion}). Sin ningun
+     * coloso a mano se avisa y no pasa nada mas
+     */
+    private static InteractionResult intentarPosesion(final Level level, final Player jugador) {
+        final Glaciarock elemental = Glaciarock.buscarDeJugador(jugador,
+            Glaciarock.RADIO_POSESION_GLACIAROCK);
+        if (elemental == null) {
+            avisarAlJugador(level, jugador, EspadaDeHielo.MENSAJE_SIN_GLACIAROCK);
+            return InteractionResult.FAIL;
+        }
+
+        // Con la vida por los suelos el coloso expulsa al piloto por su cuenta (para que no
+        // le pille su propio estallido), asi que no se deja ni entrar
+        if (elemental.estaDemasiadoHeridoParaPilotar()) {
+            avisarAlJugador(level, jugador, EspadaDeHielo.MENSAJE_GLACIAROCK_HERIDO);
+            return InteractionResult.FAIL;
+        }
+
+        // El cliente solo necesita saber que la interaccion va a cuajar; quien monta es el
+        // servidor, en el tick del coloso
+        if (!level.isClientSide()) {
+            elemental.pedirPosesion(jugador);
+        }
+
+        return InteractionResult.SUCCESS;
     }
 
     // Motivos por los que un casteo en marcha se echa atras: que te peguen (hurtTime > 0)

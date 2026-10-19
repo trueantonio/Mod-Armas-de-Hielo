@@ -10,9 +10,13 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.AddGuiOverlayLayersEvent;
 import net.minecraftforge.client.event.EntityRenderersEvent;
+import net.minecraftforge.client.event.InputEvent;
+import net.minecraftforge.client.event.RenderHandEvent;
 import net.minecraftforge.client.gui.overlay.ForgeLayeredDraw;
+import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.listener.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
+import net.minecraftforge.network.PacketDistributor;
 
 // Renderizadores de las entidades del mod y barra de casteo del cetro. Solo se registra en
 // cliente: las clases de renderizado no existen en el servidor. En Forge 65 los eventos
@@ -44,6 +48,17 @@ public final class ClienteMod {
     // Cada cuantos ticks se dibuja una marca dentro de la barra (10 = medio segundo)
     private static final int TICKS_POR_MARCA = 10;
 
+    // Tick del ultimo puñetazo pedido desde dentro del Glaciarock. El clic izquierdo se
+    // repite cada tick mientras se mantiene pulsado (atacando o minando) y al coloso hay
+    // que pedirle un golpe por segundo como mucho, que es lo que dura su animacion
+    private static int ultimoGolpeDeJinete = -1000;
+
+    // Mientras se pilota el Glaciarock se esconde el HUD del jugador para que la vista sea
+    // la del coloso. Se apunta si el HUD ya venia escondido de antes (tecla F1) para
+    // devolverlo exactamente como estaba al bajar
+    private static boolean hudEscondidoPorPosesion = false;
+    private static boolean hudEstabaEscondidoAntes = false;
+
     // La capa del HUD se anade a mano porque AddGuiOverlayLayersEvent tiene su propio bus
     // (no es de los que recogen los @SubscribeEvent). Se hace en un bloque estatico porque
     // Forge ya carga esta clase al escanear los @EventBusSubscriber de cliente, mucho antes
@@ -65,6 +80,75 @@ public final class ClienteMod {
             CAPA_BARRA_CONJURO,
             ForgeLayeredDraw.SELECTED_ITEM_NAME,
             ClienteMod::dibujarBarraDeConjuro));
+
+        // Con el clic izquierdo dentro del Glaciarock pasa lo contrario: no pega el jugador,
+        // pega el coloso. Minecraft lo manda como un ataque normal (y, si el punto de mira
+        // acaba en un bloque, ademas se pone a minar), asi que se cancela el clic y se le
+        // pide el puñetazo al servidor con el paquete del mod. Como el evento se repite
+        // cada tick mientras se mantiene pulsado, los avisos se espacian lo que dura la
+        // animacion de golpe del coloso
+        InputEvent.InteractionKeyMappingTriggered.BUS.addListener(evento -> {
+            if (!evento.isAttack()) {
+                return false;
+            }
+
+            final Player jugador = Minecraft.getInstance().player;
+            if (jugador == null || !(jugador.getVehicle() instanceof Glaciarock)) {
+                return false;
+            }
+
+            // Que el jugador no de la patada al aire: el que pega es el coloso
+            evento.setSwingHand(false);
+
+            final int ahora = jugador.tickCount;
+            // El contador del jugador vuelve a cero al entrar en un mundo nuevo (y al
+            // reaparecer): si va por detras del ultimo golpe es que es otro jugador, asi
+            // que se toma como que ya toca pegar
+            if (ahora < ultimoGolpeDeJinete
+                    || ahora - ultimoGolpeDeJinete >= Glaciarock.TICKS_ATAQUE_GLACIAROCK) {
+                ultimoGolpeDeJinete = ahora;
+                EspadaDeHielo.CANAL.send(new PaqueteAtaqueGlaciarock(),
+                    PacketDistributor.SERVER.noArg());
+            }
+
+            // El clic se cancela siempre: desde dentro no se mina ni se pega a mano
+            return true;
+        });
+
+        // Dentro del Glaciarock no se dibuja el brazo ni el arma del jugador en primera
+        // persona: los brazos que se ven son los del propio coloso (ver GlaciarockRenderer)
+        RenderHandEvent.BUS.addListener(evento -> {
+            final Player jugador = Minecraft.getInstance().player;
+            return jugador != null && jugador.getVehicle() instanceof Glaciarock;
+        });
+
+        // Mientras se pilota el coloso se esconde el HUD del jugador (corazones, hambre,
+        // armadura, hotbar, experiencia y punto de mira), que es justo lo que hace la tecla
+        // F1, para que la pantalla quede limpia como la de una maquina. Al bajar se
+        // devuelve a como estaba (si el jugador ya lo tenia escondido, se respeta)
+        TickEvent.ClientTickEvent.Post.BUS.addListener(evento -> {
+            final Minecraft cliente = Minecraft.getInstance();
+            final boolean pilotando = cliente.player != null
+                && cliente.player.getVehicle() instanceof Glaciarock;
+
+            if (pilotando) {
+                if (!hudEscondidoPorPosesion) {
+                    hudEscondidoPorPosesion = true;
+                    hudEstabaEscondidoAntes = cliente.gui.hud.isHidden();
+                }
+
+                // Si el jugador pulsa F1 mientras pilota, se vuelve a esconder
+                if (!cliente.gui.hud.isHidden()) {
+                    cliente.gui.hud.toggle();
+                }
+            } else if (hudEscondidoPorPosesion) {
+                hudEscondidoPorPosesion = false;
+
+                if (!hudEstabaEscondidoAntes && cliente.gui.hud.isHidden()) {
+                    cliente.gui.hud.toggle();
+                }
+            }
+        });
     }
 
     private ClienteMod() {
