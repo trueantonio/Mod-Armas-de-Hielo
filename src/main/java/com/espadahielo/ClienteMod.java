@@ -22,5 +22,10 @@ public final class ClienteMod {
     public static void alRegistrarRenderizadores(final EntityRenderersEvent.RegisterRenderers event) {
         event.registerEntityRenderer(EspadaDeHielo.ENTIDAD_BOLA_DE_HIELO.get(),
             contexto -> new ThrownItemRenderer<>(contexto, 3.0F, true));
+
+        // El Glaciarock es un GeoEntity de GeckoLib: el renderizador solo aporta el
+        // contexto y el tipo de entidad (los modelos y animaciones los busca GeckoLib
+        // solo con el nombre de la entidad, ver GlaciarockRenderer)
+        event.registerEntityRenderer(EspadaDeHielo.ENTIDAD_GLACIAROCK.get(), GlaciarockRenderer::new);
     }
 }

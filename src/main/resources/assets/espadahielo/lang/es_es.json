@@ -3,5 +3,8 @@
   "item.espadahielo.cetro_de_hielo": "Cetro de Hielo",
   "item.espadahielo.bola_de_hielo": "Bola de Hielo",
   "block.espadahielo.fuego_azul": "Fuego Azul",
-  "entity.espadahielo.bola_de_hielo": "Bola de Hielo"
+  "entity.espadahielo.bola_de_hielo": "Bola de Hielo",
+  "entity.espadahielo.glaciarock": "Glaciarock",
+  "espadahielo.mensaje.energia_insuficiente": "Energia insuficiente para invocar al Glaciarock",
+  "espadahielo.mensaje.sin_espacio": "No hay espacio suficiente para invocar al Glaciarock"
 }

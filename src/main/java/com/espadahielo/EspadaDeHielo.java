@@ -9,6 +9,7 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraftforge.event.BuildCreativeModeTabContentsEvent;
+import net.minecraftforge.event.entity.EntityAttributeCreationEvent;
 import net.minecraftforge.event.entity.player.PlayerInteractEvent;
 import net.minecraftforge.event.network.CustomPayloadEvent;
 import net.minecraftforge.fml.common.Mod;
@@ -99,6 +100,19 @@ public final class EspadaDeHielo {
     // de golpe. Mientras dura, el cetro se ve en el HUD con el enfriamiento encima
     public static final int TICKS_ENTRE_DISPAROS_CETRO = 10;
 
+    // --- Invocacion del Glaciarock (clic derecho con el cetro) ---
+    // Duracion del casteo: 60 ticks = 3 segundos. Si se suelta el boton antes, el
+    // casteo no cuenta para nada y hay que empezar de cero
+    public static final int TICKS_CONJURO_GLACIAROCK = 60;
+    // Durabilidad que consume invocar (165 = 33% de las 500 del cetro). Solo se cobra
+    // cuando el elemental sale al mundo con bien: si no hay espacio o no hay durabilidad
+    // suficiente, el cetro no gasta nada
+    public static final int DURABILIDAD_CONJURO_GLACIAROCK = 165;
+    // Mensaje (traducible) que aparece sobre la barra de casteo si no hay durabilidad
+    public static final String MENSAJE_ENERGIA_INSUFICIENTE = "espadahielo.mensaje.energia_insuficiente";
+    // Mensaje si al terminar el casteo no cabe el elemental en ningun sitio
+    public static final String MENSAJE_SIN_ESPACIO = "espadahielo.mensaje.sin_espacio";
+
     // --- Bola de hielo del Cetro de Hielo ---
     // Punto del que SALE la bola: la punta del cetro que el jugador lleva en la mano, no su
     // cara (igual que el rayo de hielo sale de la espada). Es un desplazamiento respecto a
@@ -174,6 +188,19 @@ public final class EspadaDeHielo {
             .build(ENTIDADES.key("bola_de_hielo"))
     );
 
+    // El Glaciarock: elemental de hielo invocado por el Cetro de Hielo. Categoria MISC
+    // para que no cuente como mob hostil: no aparece solo, no se despawnea por alejarse
+    // y en dificultad pacifica sigue existiendo (los Monster se cargan solos ahi).
+    // La hitbox base es la de Glaciarock: al llevar el atributo SCALE a 5, el juego la
+    // multiplica por 5 (4 x 4 x 7.25 bloques de golpe)
+    public static final RegistryObject<EntityType<Glaciarock>> ENTIDAD_GLACIAROCK = ENTIDADES.register("glaciarock",
+        () -> EntityType.Builder.<Glaciarock>of(Glaciarock::new, MobCategory.MISC)
+            .sized(Glaciarock.ANCHO_BASE_GLACIAROCK, Glaciarock.ALTO_BASE_GLACIAROCK)
+            .clientTrackingRange(10)
+            .updateInterval(3)
+            .build(ENTIDADES.key("glaciarock"))
+    );
+
     public EspadaDeHielo(FMLJavaModLoadingContext context) {
         var modBusGroup = context.getModBusGroup();
 
@@ -201,6 +228,17 @@ public final class EspadaDeHielo {
         // Bola de hielo: clic izquierdo al aire con el Cetro de Hielo. Solo cliente:
         // le avisamos al servidor con el propio paquete
         PlayerInteractEvent.LeftClickEmpty.BUS.addListener(EspadaDeHielo::alGolpearAlAireConCetro);
+
+        // Atributos del Glaciarock (salud, ataque, escala...): sin esto, cualquier
+        // instancia de la entidad reventaria al primer golpe (0 de salud maxima)
+        EntityAttributeCreationEvent.BUS.addListener(EspadaDeHielo::alCrearAtributos);
+    }
+
+    // Forge pregunta por los atributos de cada entidad registrada despues de la
+    // registrada de tipos y antes del arranque. Sin entrada aqui, el tipo existe pero la
+    // entidad no puede ni existir en el mundo
+    private static void alCrearAtributos(final EntityAttributeCreationEvent event) {
+        event.put(ENTIDAD_GLACIAROCK.get(), Glaciarock.crearAtributos().build());
     }
 
     private static void addCreative(BuildCreativeModeTabContentsEvent event) {

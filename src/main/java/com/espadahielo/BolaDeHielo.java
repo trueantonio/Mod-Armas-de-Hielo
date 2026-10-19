@@ -163,48 +163,13 @@ public class BolaDeHielo extends Fireball {
 
     /**
      * Todo lo que ocurre cuando la bola revienta (contra un bloque, una entidad o la
-     * superficie del agua): explosion de potencia
-     * {@value EspadaDeHielo#POTENCIA_EXPLOSION_BOLA} (la del ghast es 1) que rompe
-     * bloques si el game rule mobGriefing lo permite, igual que la bola del ghast.
-     * Despues de explotar:
-     *  - ralentiza a las criaturas vivas que alcance el radio de la explosion (menos
-     *    al dueno del cetro),
-     *  - congela en hielo el agua que rodea el impacto, hasta el borde del crater,
-     *  - siembra unos cuantos mechones de fuego azul en el crater (solo si la explosion
-     *    puede modificar el terreno),
-     *  - y suelta una nube de copos de nieve turquesa.
+     * superficie del agua): esta delegado en {@link ExplosionDeHielo}, que es el mismo
+     * efecto helado que produce la muerte del Glaciarock (explosion de potencia
+     * {@value EspadaDeHielo#POTENCIA_EXPLOSION_BOLA}, ralentizacion, agua congelada,
+     * fuego azul en el crater y copos). Despues la bola se borra a si misma
      */
     private void explotar(final ServerLevel servidor) {
-        // El mobGriefing decide si la explosion abre crater y si deja fuego
-        final boolean rompeBloques = net.minecraftforge.event.ForgeEventFactory
-            .getMobGriefingEvent(servidor, this.getOwner());
-
-        // Ojo: el boolean de explode NO es "romper bloques", es "generar fuego". Va en
-        // false para que vanilla no siembre fuego normal en el crater (el romper bloques
-        // ya lo decide la interaccion MOB con el mobGriefing). El fuego que deja esta
-        // bola es el azul del mod, que se coloca a mano justo debajo (sembrarFuegoAzul)
-        this.level().explode(this, this.getX(), this.getY(), this.getZ(),
-            EspadaDeHielo.POTENCIA_EXPLOSION_BOLA, false, Level.ExplosionInteraction.MOB);
-
-        // Ralentizacion por la propia explosion (radio = potencia x 2, la medida de
-        // la explosion): cualquier criatura viva dentro de ese radio sale lenta, salvo
-        // el dueno para que no se perjudique a si mismo
-        this.aplicarRalentizacionPorExplosion(servidor);
-
-        // El agua alrededor pasa a hielo (mismo efecto que la espada, en area)
-        this.congelarAguaCerca(servidor);
-
-        // Mechones de fuego azul en el crater (bloque propio del mod)
-        if (rompeBloques) {
-            this.sembrarFuegoAzul(servidor);
-        }
-
-        // Aurora helada de la explosion: copos y chispas turquesa alrededor del punto
-        servidor.sendParticles(net.minecraft.core.particles.ParticleTypes.SNOWFLAKE,
-            this.getX(), this.getY() + 0.5, this.getZ(), 20, 1.2, 1.2, 1.2, 0.05);
-        servidor.sendParticles(PARTICULA_RASTRO,
-            this.getX(), this.getY() + 0.5, this.getZ(), 12, 1.0, 1.0, 1.0, 0.02);
-
+        ExplosionDeHielo.explotar(servidor, this, this.position(), this.getOwner());
         this.discard();
     }
 
@@ -239,100 +204,6 @@ public class BolaDeHielo extends Fireball {
                 ));
                 this.level().playSound(null, vivo.getX(), vivo.getEyeY(), vivo.getZ(),
                     SoundEvents.PLAYER_HURT_FREEZE, SoundSource.PLAYERS, 0.9F, 0.8F);
-            }
-        }
-    }
-
-    /**
-     * Congela en area el agua que rodea el punto de impacto: todos los bloques de agua
-     * dentro de un radio de {@value EspadaDeHielo#RADIO_CONGELADO_BOLA} bloques pasan a
-     * hielo, igual que al golpear agua con la Espada de Hielo. Como la explosion no
-     * destruye el agua, esto se hace justo despues de explotar, para pillar lo que quede
-     * alrededor del crater. Si congela algo, suena el cristal de la espada.
-     */
-    private void congelarAguaCerca(final ServerLevel servidor) {
-        final int radio = EspadaDeHielo.RADIO_CONGELADO_BOLA;
-        final double radioCuadrado = radio * radio;
-        final BlockPos centro = BlockPos.containing(this.position());
-        final var dueno = this.getOwner();
-        final AABB cajaDueno = (dueno == null) ? null : dueno.getBoundingBox();
-        int congelados = 0;
-
-        for (final BlockPos pos : BlockPos.betweenClosed(
-                centro.offset(-radio, -radio, -radio), centro.offset(radio, radio, radio))) {
-            if (cajaDueno != null && cajaDueno.intersects(new AABB(pos))) {
-                continue;
-            }
-            if (pos.distToCenterSqr(this.position()) <= radioCuadrado
-                    && servidor.getBlockState(pos).is(Blocks.WATER)
-                    && servidor.setBlock(pos, Blocks.ICE.defaultBlockState(), 3)) {
-                congelados++;
-            }
-        }
-
-        if (congelados > 0) {
-            this.level().playSound(null, this.getX(), this.getY(), this.getZ(),
-                SoundEvents.GLASS_BREAK, SoundSource.BLOCKS, 0.7F, 1.15F);
-        }
-    }
-
-    /**
-     * Deja mechones de fuego azul cielo ({@link FuegoAzulBlock}) repartidos por el crater
-     * de la explosion. A diferencia del fuego de almas, este bloque no necesita una base
-     * de arena/tierra de almas: se mantiene sobre cualquier suelo firme del crater, asi
-     * que no hay que generar nada debajo. Si coloca alguno, suena el escape de alma.
-     */
-    private void sembrarFuegoAzul(final ServerLevel servidor) {
-        final var azar = servidor.getRandom();
-        final int radio = EspadaDeHielo.RADIO_FUEGOS_AZULES;
-        final double radioCuadrado = radio * radio;
-        final BlockPos centro = BlockPos.containing(this.position());
-        final List<BlockPos> candidatos = new ArrayList<>();
-
-        // Huecos de aire con suelo firme debajo: candidatos a quedarse con fuego
-        // (sin fluidos: ni agua ni lava cuentan como suelo)
-        for (final BlockPos pos : BlockPos.betweenClosed(
-                centro.offset(-radio, -radio, -radio), centro.offset(radio, radio, radio))) {
-            final var suelo = servidor.getBlockState(pos.below());
-            if (pos.distToCenterSqr(this.position()) <= radioCuadrado
-                    && servidor.getBlockState(pos).isAir()
-                    && !suelo.isAir() && suelo.getFluidState().isEmpty()) {
-                candidatos.add(pos.immutable());
-            }
-        }
-
-        int colocados = 0;
-        while (!candidatos.isEmpty() && colocados < EspadaDeHielo.MAX_FUEGOS_AZULES) {
-            final BlockPos pos = candidatos.remove(azar.nextInt(candidatos.size()));
-            servidor.setBlock(pos, EspadaDeHielo.FUEGO_AZUL.get().defaultBlockState(), 3);
-            colocados++;
-        }
-
-        if (colocados > 0) {
-            this.level().playSound(null, this.getX(), this.getY(), this.getZ(),
-                SoundEvents.SOUL_ESCAPE.value(), SoundSource.BLOCKS, 0.6F, 1.0F);
-        }
-    }
-
-    /**
-     * La explosion en si aplica el mismo efecto de Ralentizacion que la Espada de Hielo
-     * a toda criatura viva dentro del radio de la explosion (potencia x 2), excluyendo
-     * al dueno del cetro.
-     */
-    private void aplicarRalentizacionPorExplosion(final ServerLevel servidor) {
-        final double radio = EspadaDeHielo.POTENCIA_EXPLOSION_BOLA * 2.0;
-        final double radioCuadrado = radio * radio;
-        final Vec3 centro = this.position();
-        final var dueno = this.getOwner();
-        final AABB caja = new AABB(centro, centro).inflate(radio + 0.25);
-
-        for (final LivingEntity enemigo : servidor.getEntitiesOfClass(LivingEntity.class, caja,
-                e -> e.isAlive() && e != dueno)) {
-            if (enemigo.distanceToSqr(centro.x, centro.y, centro.z) <= radioCuadrado) {
-                enemigo.addEffect(new MobEffectInstance(
-                    MobEffects.SLOWNESS,
-                    EspadaDeHielo.TICKS_RALENTIZACION,
-                    EspadaDeHielo.NIVEL_RALENTIZACION));
             }
         }
     }
