@@ -64,6 +64,12 @@ import net.minecraft.world.phys.Vec3;
  *    es invulnerable al fuego: le hace mas dano, no menos).
  *  - Detecta mobs hostiles hasta 30 bloques (atributo FOLLOW_RANGE) y solo persigue
  *    hasta {@value #DISTANCIA_PERSECUCION} bloques.
+ *  - Sin enemigos cerca vive suelto a tu lado: te empieza a seguir cuando te alejas
+ *    {@value #DISTANCIA_SEGUIMIENTO_GLACIAROCK} bloques y se para a
+ *    {@value #DISTANCIA_PARADA_GLACIAROCK} (no se te pega), y solo si te vas a mas de
+ *    {@value #DISTANCIA_TELEPORTE_GLACIAROCK} se teletransporta a tu lado. Son las
+ *    distancias de la calma, no una barrera: en cuanto hay enemigos manda el ataque
+ *    (prioridad 2 sobre el 3) y le da igual estar contigo pegado o a media pelea lejos.
  *  - Clic derecho con la mano vacia encima del su dueno: se queda quieto de guardia con
  *    copos de nieve de confirmacion; otro clic derecho vuelve a moverse. No se le puede
  *    desinvocar a mano: solo muere al combate, al morir su dueno o al cambiar este de
@@ -117,9 +123,16 @@ public class Glaciarock extends TamableAnimal implements GeoEntity {
     public static final int TICKS_ENTRE_AGGRO = 20;
 
     // Distancia (de centro a centro) a la que se teletransporta al lado de su dueno si se
-    // queda atras. La mascota vanilla lo hace a 12; un coloso de 5x necesita mas margen
-    // para no aparecer encima de nadie
-    public static final double DISTANCIA_TELEPORTE_GLACIAROCK = 25.0;
+    // queda atras. La mascota vanilla lo hace a 12; este es un coloso de 5x y ademas solo
+    // llega a teletransportarse si de verdad te has ido lejos (el seguimiento arranca a 20
+    // y se para a 11, asi que hasta 40 siempre viene andando)
+    public static final double DISTANCIA_TELEPORTE_GLACIAROCK = 40.0;
+
+    // Seguimiento del dueno (solo mientras no haya enemigos, ver registerGoals): arranca a
+    // 20 bloques de centro a centro y se para a 11, o sea a 9 del borde de su cuerpo. No son
+    // una barrera de separacion: con enemigos cerca se pelea donde haga falta, pegado o no
+    public static final double DISTANCIA_SEGUIMIENTO_GLACIAROCK = 20.0;
+    public static final double DISTANCIA_PARADA_GLACIAROCK = 11.0;
 
     // Sin dueno no sigue a nadie ni muere con su invocador. Uno invocado a mano (/summon
     // no le pone dueno) se domestica al jugador mas cercano durante el primer segundo, como
@@ -238,9 +251,13 @@ public class Glaciarock extends TamableAnimal implements GeoEntity {
         this.goalSelector.addGoal(1, new SitWhenOrderedToGoal(this));
         // 2: ataque cuerpo a cuerpo sincronizado con la animacion
         this.goalSelector.addGoal(2, new AtaqueDeGlaciarock(this));
-        // 3: seguir al dueno en cuanto se aleja 5 bloques, corriendo (1.5x) y parandose ya
-        // pegado a el: 3 bloques de centro a centro son 1 desde el borde de su cuerpo
-        this.goalSelector.addGoal(3, new FollowOwnerGoal(this, 1.5D, 5.0F, 3.0F));
+        // 3: seguir al dueno SOLO cuando se aleja {@value #DISTANCIA_SEGUIMIENTO_GLACIAROCK}
+        // bloques, corriendo (1.5x) y dejandole en paz hasta los
+        // {@value #DISTANCIA_PARADA_GLACIAROCK} (nunca se le pega). Ojo, estas distancias
+        // solo mandan cuando no hay enemigos: con enemigos cerca manda el ataque (prioridad
+        // 2, por encima de este 3) y le da igual estar pegado o lejos
+        this.goalSelector.addGoal(3, new FollowOwnerGoal(this, 1.5D,
+            (float) DISTANCIA_SEGUIMIENTO_GLACIAROCK, (float) DISTANCIA_PARADA_GLACIAROCK));
         // 4: pasear por el entorno
         this.goalSelector.addGoal(4, new RandomStrollGoal(this, 1.2D));
         this.goalSelector.addGoal(5, new LookAtPlayerGoal(this, Player.class, 14.0F));
@@ -414,9 +431,10 @@ public class Glaciarock extends TamableAnimal implements GeoEntity {
     }
 
     /**
-     * Se teletransporta al lado de su dueno si se queda muy atras. La mascota vanilla lo
-     * hace a 12 bloques; este es un coloso de 5x y necesita mas margen para no aparecer
-     * encima de nada (ni de nadie)
+     * Se teletransporta al lado de su dueno si se queda muy atras
+     * ({@value #DISTANCIA_TELEPORTE_GLACIAROCK} bloques). La mascota vanilla lo hace a 12;
+     * este viene andando desde mucho antes (el seguimiento arranca a 20 y se para a 11), asi
+     * que solo recurre al teletransporte cuando de verdad te has ido lejos
      */
     @Override
     public boolean shouldTryTeleportToOwner() {
