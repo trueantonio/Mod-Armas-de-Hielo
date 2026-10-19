@@ -75,8 +75,9 @@ import net.minecraft.world.phys.Vec3;
  *    copos de nieve de confirmacion; otro clic derecho vuelve a moverse. No se le puede
  *    desinvocar a mano: solo muere al combate, al morir su dueno o al cambiar este de
  *    dimension.
- *  - Mientras anda congela el agua a {@value #RADIO_CONGELADO_ANDANDO} bloques a su
- *    alrededor y sus pasos suenan pesados (estampidas de T-Rex).
+ *  - Cuando esta en el suelo congela la superficie del agua en un cuadrado de
+ *    {@value #LADO_CONGELADO_GLACIAROCK} x {@value #LADO_CONGELADO_GLACIAROCK} bloques a su
+ *    alrededor, y sus pasos suenan pesados (estampidas de T-Rex).
  *  - Salta como un caballo al maximo (fuerza de salto 1.0): el paso de 1.5 le deja subir
  *    andando los escalones normales, y cuando se topa con un repecho de 2-3 bloques que
  *    el navegador no sabe rodear se impulsa el solo (ver
@@ -166,16 +167,19 @@ public class Glaciarock extends TamableAnimal implements GeoEntity {
     // 0.88 x 5 = 4.4 sobre los pies del coloso, mas los 1.62 de los ojos del jugador, o sea
     // a 6 sobre el suelo: la altura de la cabeza del modelo)
     public static final Vec3 SITIO_JINETE_GLACIAROCK = new Vec3(0.0, 0.88, 0.20);
-    // Impulso hacia arriba con el que sale despedido el piloto al morir el coloso ("como
-    // si saliese del robot")
-    public static final double IMPULSO_EYECCION_GLACIAROCK = 1.2;
+    // Impulso hacia arriba con el que sale despedido el piloto al morir el coloso o al
+    // quedarle muy poca vida ("como si saliese del robot"). Con 3.0 sube unos 37 bloques
+    // con la gravedad normal del jugador
+    public static final double IMPULSO_EYECCION_GLACIAROCK = 3.0;
     // Ticks de caida lenta que se le dan al salir despedido: el coloso revienta dejando un
-    // crater y el piloto sale volando por encima de el, pero sin estamparse contra el suelo
-    public static final int TICKS_CAIDA_LENTA_EYECCION_GLACIAROCK = 120;
-    // Fraccion de su salud maxima por debajo de la cual el coloso expulsa al piloto por su
-    // cuenta, antes de que lo maten: asi no le pilla la explosion de dentro. Estando tan
-    // tocado tampoco deja que nadie vuelva a meterse (saldria despedido al momento)
-    public static final float FRACCION_EXPULSION_JINETE_GLACIAROCK = 0.25F;
+    // crater y el piloto sale volando por encima de el, pero sin estamparse contra el suelo.
+    // Con el impulso de 3.0 el vuelo entero dura unos 132 ticks, asi que se deja margen de
+    // sobra para que el efecto siga activo al tomar tierra (la caida lenta anula el dano)
+    public static final int TICKS_CAIDA_LENTA_EYECCION_GLACIAROCK = 200;
+    // Vida a la que el coloso expulsa al piloto por su cuenta, antes de que lo maten: asi
+    // no le pilla la explosion de dentro. Estando tan tocado tampoco deja que nadie vuelva
+    // a meterse (saldria despedido al momento)
+    public static final float VIDA_EXPULSION_JINETE_GLACIAROCK = 25.0F;
     // Cono de la mirada (en grados, mitad a cada lado) dentro del que el piloto busca a
     // quien pegar al hacer clic izquierdo desde dentro
     public static final double ANGULO_GOLPE_JINETE = 65.0;
@@ -188,9 +192,10 @@ public class Glaciarock extends TamableAnimal implements GeoEntity {
     // Multiplicador de dano de fuego/lava que recibe
     public static final float MULT_DANO_FUEGO = 1.5F;
 
-    // Radio (en bloques, horizontal) del agua que congela mientras camina
-    public static final int RADIO_CONGELADO_ANDANDO = 5;
-    // Cada cuantos ticks se vuelve a mirar el agua alrededor mientras anda
+    // Lado (en bloques) del cuadrado de agua que congela a su alrededor cuando esta en el
+    // suelo: 11 = un 11x11 centrado en el, o sea 5 bloques hacia cada lado
+    public static final int LADO_CONGELADO_GLACIAROCK = 11;
+    // Cada cuantos ticks se vuelve a mirar el agua alrededor
     public static final int TICKS_ENTRE_CONGELADAS = 4;
     // Ticks entre estampida y estampida (el paso pesado, estilo T-Rex)
     public static final int TICKS_ENTRE_PASOS = 10;
@@ -379,13 +384,15 @@ public class Glaciarock extends TamableAnimal implements GeoEntity {
             }
         }
 
-        // 2) Andando: congelar el agua alrededor y soltar la estampida pesada
-        if (this.onGround() && this.estaMoviendoseDeVerdad()) {
+        // 2) En el suelo: congelar la superficie del agua de alrededor y, andando, soltar la
+        //    estampida pesada
+        if (this.onGround()) {
             if (this.tickCount % TICKS_ENTRE_CONGELADAS == 0) {
-                this.congelarAguaAlAndar(servidor);
+                this.congelarAguaAlrededor(servidor);
             }
 
-            if (++this.ticksDesdeUltimoPaso >= TICKS_ENTRE_PASOS) {
+            if (this.estaMoviendoseDeVerdad()
+                    && ++this.ticksDesdeUltimoPaso >= TICKS_ENTRE_PASOS) {
                 this.ticksDesdeUltimoPaso = 0;
                 servidor.playSound(null, this.getX(), this.getY(), this.getZ(),
                     SoundEvents.WARDEN_STEP, SoundSource.NEUTRAL, 2.0F, 0.55F);
@@ -690,13 +697,13 @@ public class Glaciarock extends TamableAnimal implements GeoEntity {
     }
 
     /**
-     * Con la vida por los suelos ({@value #FRACCION_EXPULSION_JINETE_GLACIAROCK} de la
-     * maxima o menos) el coloso no se deja pilotar: cualquiera que se meta dentro saldria
-     * despedido al tick siguiente, asi que mejor no dejarle entrar y avisar. El cetro lo
-     * consulta antes de pedir la posesion
+     * Con la vida por los suelos ({@value #VIDA_EXPULSION_JINETE_GLACIAROCK} puntos o
+     * menos) el coloso no se deja pilotar: cualquiera que se meta dentro saldria despedido
+     * al tick siguiente, asi que mejor no dejarle entrar y avisar. El cetro lo consulta
+     * antes de pedir la posesion
      */
     public boolean estaDemasiadoHeridoParaPilotar() {
-        return this.getHealth() <= this.getMaxHealth() * FRACCION_EXPULSION_JINETE_GLACIAROCK;
+        return this.getHealth() <= VIDA_EXPULSION_JINETE_GLACIAROCK;
     }
 
     /**
@@ -949,8 +956,9 @@ public class Glaciarock extends TamableAnimal implements GeoEntity {
 
     /**
      * Clic derecho con la mano vacia y siendo el dueno: alterna la guardia (quieto mirando
-     * a los lados) con unos copos de nieve de confirmacion. Al entrar en guardia se queda
-     * quieto; al salir, vuelve a moverse por su cuenta. No hay forma de desinvocarlo
+     * a los lados) con una nube de copos de nieve y un crujido de confirmacion. Al entrar
+     * en guardia se para en seco donde esta; al salir, vuelve a moverse por su cuenta. No
+     * hay forma de desinvocarlo
      */
     @Override
     public InteractionResult mobInteract(final Player jugador, final InteractionHand mano) {
@@ -966,39 +974,81 @@ public class Glaciarock extends TamableAnimal implements GeoEntity {
             return InteractionResult.SUCCESS;
         }
 
-        this.setOrderedToSit(!this.isOrderedToSit());
+        final boolean sentado = !this.isOrderedToSit();
+        this.setOrderedToSit(sentado);
 
-        // Confirmacion visual de la orden
-        ((ServerLevel) this.level()).sendParticles(ParticleTypes.SNOWFLAKE,
-            this.getX(), this.getY() + 1.5, this.getZ(), 16, 2.5, 1.0, 2.5, 0.02);
+        // Parar en seco: la orden de sentarse frena la navegacion, pero aqui se corta ya
+        // mismo el movimiento horizontal para que no se deslice ni un bloque
+        this.getNavigation().stop();
+        this.setDeltaMovement(0.0, this.getDeltaMovement().y, 0.0);
+
+        this.efectoDeGuardia((ServerLevel) this.level(), sentado);
 
         return InteractionResult.SUCCESS;
     }
 
-    // --- Congelar el agua mientras camina ---
+    /**
+     * Aviso de que la guardia ha cambiado: una nube de copos de nieve por todo el cuerpo
+     * (se ve desde lejos, que es de lo que se trata) mas un remolino bajo a ras de suelo y
+     * un crujido de nieve. Al sentarse suena mas grave que al volver a moverse, para
+     * distinguir las dos ordenes
+     */
+    private void efectoDeGuardia(final ServerLevel servidor, final boolean sentado) {
+        final double alto = this.getBbHeight();
+        final double ancho = this.getBbWidth();
+
+        // Nube de copos por todo el coloso
+        servidor.sendParticles(ParticleTypes.SNOWFLAKE,
+            this.getX(), this.getY() + alto * 0.5, this.getZ(),
+            140, ancho * 0.55, alto * 0.45, ancho * 0.55, 0.06);
+
+        // Remolino bajo, a ras de suelo, para que se note tambien de lejos
+        servidor.sendParticles(ParticleTypes.SNOWFLAKE,
+            this.getX(), this.getY() + 0.25, this.getZ(),
+            60, ancho * 0.9, 0.15, ancho * 0.9, 0.03);
+
+        servidor.playSound(null, this.getX(), this.getY(), this.getZ(),
+            SoundEvents.SNOW_BREAK, SoundSource.NEUTRAL, 1.6F, sentado ? 0.65F : 1.0F);
+    }
+
+    // --- Congelar el agua alrededor ---
 
     /**
-     * Convierte en hielo el agua (solo la de fuente, igual que la espada) a
-     * {@value #RADIO_CONGELADO_ANDANDO} bloques a la redonda en horizontal. La distancia
-     * se mide en el plano porque el centro del coloso esta 3.6 bloques sobre sus pies: con
-     * una esfera de radio 5 casi no le llegaria el agua a los talones
+     * Congela la superficie del agua que tenga alrededor: un cuadrado de
+     * {@value #LADO_CONGELADO_GLACIAROCK} x {@value #LADO_CONGELADO_GLACIAROCK} bloques
+     * centrado en el coloso. En cada columna se hiela solo el bloque de agua mas alto (la
+     * superficie), no toda la columna, para que el hielo quede a ras del agua. Se busca
+     * desde un poco por debajo de sus pies hasta por encima de su cabeza, porque si va
+     * metido en el agua la superficie puede quedarle a media altura del cuerpo y hay que
+     * llegar hasta ella.
+     *
+     * Solo se congela agua de fuente, igual que la espada, y nunca un bloque que ocupe el
+     * propio coloso: se quedaria encajado dentro del hielo
      */
-    private void congelarAguaAlAndar(final ServerLevel servidor) {
-        final int radio = RADIO_CONGELADO_ANDANDO;
-        final double radioCuadrado = radio * radio;
-        final Vec3 centro = this.position();
-        final BlockPos esquina = BlockPos.containing(centro);
+    private void congelarAguaAlrededor(final ServerLevel servidor) {
+        final int mitad = LADO_CONGELADO_GLACIAROCK / 2;
+        final BlockPos centro = BlockPos.containing(this.position());
+        final int minY = (int) Math.floor(this.getBoundingBox().minY) - 2;
+        final int maxY = (int) Math.floor(this.getBoundingBox().maxY) + 1;
+        final AABB cajaColoso = this.getBoundingBox();
 
-        for (final BlockPos pos : BlockPos.betweenClosed(
-                esquina.offset(-radio, -2, -radio), esquina.offset(radio, 2, radio))) {
-            final double dx = pos.getX() + 0.5 - centro.x;
-            final double dz = pos.getZ() + 0.5 - centro.z;
-            if (dx * dx + dz * dz > radioCuadrado) {
-                continue;
-            }
+        for (int dx = -mitad; dx <= mitad; dx++) {
+            for (int dz = -mitad; dz <= mitad; dz++) {
+                // De arriba abajo: el primer agua de la columna es la superficie. Si justo
+                // encima sigue habiendo agua, es que la superficie queda por encima del
+                // rango de busqueda y esa columna no se toca
+                for (int y = maxY; y >= minY; y--) {
+                    final BlockPos pos = new BlockPos(centro.getX() + dx, y, centro.getZ() + dz);
+                    if (!servidor.getFluidState(pos).is(Fluids.WATER)) {
+                        continue;
+                    }
 
-            if (servidor.getFluidState(pos).is(Fluids.WATER)) {
-                servidor.setBlock(pos, Blocks.ICE.defaultBlockState(), 3);
+                    if (!servidor.getFluidState(pos.above()).is(Fluids.WATER)
+                            && !cajaColoso.intersects(new AABB(pos))) {
+                        servidor.setBlock(pos, Blocks.ICE.defaultBlockState(), 3);
+                    }
+                    break;
+                }
             }
         }
     }

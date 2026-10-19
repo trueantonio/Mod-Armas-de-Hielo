@@ -71,10 +71,11 @@ public class GlaciarockRenderer extends GeoEntityRenderer<Glaciarock, LivingEnti
 
     /**
      * En la vista del piloto en primera persona no se dibuja el coloso entero: la camara va
-     * a la altura de su cabeza, asi que el modelo le taparia la vista. En su lugar se deja
-     * fuera la cabeza/cuerpo y las piernas y se levantan los brazos hacia delante, para que
-     * el jugador vea los brazos de hielo como si fueran suyos. En tercera persona (F5) y
-     * para el resto de jugadores se dibuja normal, como cualquier otra criatura
+     * a la altura de su cabeza, asi que el bloque cabeza/cuerpo le taparia la vista y se
+     * deja fuera. Las piernas y los pies se quedan puestos para verlos al mirar hacia abajo,
+     * y los brazos se levantan hacia delante, para que el jugador vea los brazos de hielo
+     * como si fueran suyos. En tercera persona (F5) y para el resto de jugadores se dibuja
+     * normal, como cualquier otra criatura
      */
     @Override
     @SuppressWarnings({"rawtypes", "unchecked"})
@@ -86,11 +87,10 @@ public class GlaciarockRenderer extends GeoEntityRenderer<Glaciarock, LivingEnti
         }
 
         final RenderPassInfo.BoneUpdater recorteDePiloto = (info, huesos) -> {
-            // Fuera el bloque cabeza/cuerpo (que va del pecho a la coronilla) y las piernas,
-            // que taparian la camara; se saltan tambien sus hijos por si acaso
+            // Fuera solo el bloque cabeza/cuerpo (que va del pecho a la coronilla), que es
+            // el que rodearia la camara; se saltan tambien sus hijos por si acaso. Las
+            // piernas y los pies se dejan: son lo que se ve al mirar hacia abajo
             huesos.ifPresent("cabeza", hueso -> hueso.skipRender(true).skipChildrenRender(true));
-            huesos.ifPresent("pierna izquierda", hueso -> hueso.skipRender(true).skipChildrenRender(true));
-            huesos.ifPresent("pie derecho", hueso -> hueso.skipRender(true).skipChildrenRender(true));
 
             // Los brazos se giran hacia delante conservando una parte del balanceo original
             huesos.ifPresent("mano derecha", hueso -> hueso.setRotX(
